@@ -1,0 +1,35 @@
+{
+  "name": "w-scan-dep",
+  "version": "1.0.0",
+  "main": "dist/w-scan-dep.umd.js",
+  "dependencies": {
+    "playwright": "^1.61.1"
+  },
+  "devDependencies": {
+    "w-package-tools": "^1.1.11"
+  },
+  "scripts": {
+    "test": "mocha --parallel --timeout 60000",
+    "deploy": "gh-pages -d docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuda-lyu/w-scan-dep.git"
+  },
+  "keywords": [
+    "package",
+    "tool",
+    "scan",
+    "dependency",
+    "vulnerability",
+    "sbom",
+    "syft",
+    "grype",
+    "osv-scanner",
+    "ex-sbom",
+    "security",
+    "node"
+  ],
+  "author": "yuda-lyu(semisphere)",
+  "license": "MIT"
+}
