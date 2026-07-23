@@ -1,14 +1,13 @@
-import wsm from './src/WScanDep.mjs'
-// import wsm from './dist/w-scan-dep.umd.js'
+import wsd from './src/WScanDep.mjs'
+// import wsd from './dist/w-scan-dep.umd.js'
 
 
 async function test() {
 
     let fpIn = './test/prj/package.json'
     let fdOut = './test/output'
-    let opt = { install: true }
 
-    let r = await wsm(fpIn, fdOut, opt)
+    let r = await wsd(fpIn, fdOut)
     console.log(r)
     // => 'ok'
 

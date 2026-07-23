@@ -1,6 +1,6 @@
 import assert from 'assert'
 import fs from 'fs'
-import wsm from '../src/WScanDep.mjs'
+import wsd from '../src/WScanDep.mjs'
 
 
 describe('WScanDep', function() {
@@ -11,7 +11,7 @@ describe('WScanDep', function() {
     let ks = ['date', 'source', 'outputDir', 'tools', 'osv', 'grype', 'exsbom', 'updateList']
 
     it('test', async function() {
-        let r = await wsm(fpIn, fdOut, { install: true })
+        let r = await wsd(fpIn, fdOut)
         assert.strict.strictEqual(r, 'ok')
 
         //result.json之欄位

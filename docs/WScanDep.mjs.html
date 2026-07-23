@@ -46,14 +46,13 @@
     <section>
         <article>
             <pre class="prettyprint source linenums"><code>// WScanDep:依賴套件漏洞掃描之函式化入口。
-// 傳入 package.json 位置(fpIn)、輸出資料夾(fdOut)、選項(opt):
-//   opt.install:true → 複製 package.json(及 lock)至 fdOut 並執行 npm install,
-//                       掃描 fdOut 全新安裝之相依;
-//                 false(預設)→ 不安裝,直接掃描來源資料夾既有之 node_modules。
-//                 (是否安裝由外部決定:資安驗收多掃「實際交付的 node_modules」故預設不裝)
+// 傳入 package.json 位置(fpIn)、輸出資料夾(fdOut)。
+// (2026-07-23 使用者裁定: 移除 opt.install——一律複製 package.json 至 fdOut/test 全新安裝後掃 test,
+//  不複製 lock 由 npm 重新解析產出 package-lock.json; 掃描目標(fdOut/test)與工具夾(fdOut/tools)分離,
+//  一併根治「syft 整樹編目把剛下載之掃描工具 exe 一起掃進 SBOM」之自掃污染)
 // 流程:
-//   1) (install 時)複製 package.json/lock 至 fdOut 並 npm install
-//   2) 下載最新版 syft/grype/osv-scanner/ex-sbom 至 fdOut/tools(隨產出交付業主)並掃描
+//   1) 複製 package.json 至 fdOut/test 並 npm install(產出 package-lock.json 與 node_modules)
+//   2) 下載最新版 syft/grype/osv-scanner/ex-sbom 至 fdOut/tools(隨產出交付業主)並掃描 fdOut/test
 //   3) ex-sbom 各漏洞套件截圖存 fdOut/pics/*.png
 //   4) 檢測數據(含截圖相對路徑 ./pics、結果文字)寫入 fdOut/result.json
 //   5) 產製 md 報告(圖以相對路徑 ./pics)寫入 fdOut/result.md
@@ -61,7 +60,7 @@
 // 回傳 'ok'。
 import { mkdir, copyFile, writeFile, access, stat } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
-import { join, basename, resolve, dirname } from 'node:path'
+import { join, basename, resolve } from 'node:path'
 import { TOOLS } from './config.mjs'
 import { ensureAllTools } from './download.mjs'
 import { runScan } from './scan.mjs'
@@ -108,21 +107,18 @@ function serializeUpdateList(ul) {
  *
  * @class
  * @param {String} fpIn 輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串
- * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出result.json、result.md、待更新套件.md、pics/*.png與tools/(本次使用之掃描工具)
- * @param {Object} [opt={}] 輸入設定物件，預設{}
- * @param {Boolean} [opt.install=false] 輸入是否複製package.json(及package-lock.json)至fdOut並執行npm install，掃描fdOut全新安裝相依之布林值，若給false則不安裝，直接掃描來源資料夾既有之node_modules，預設false
+ * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md、pics/*.png與tools/(本次使用之掃描工具)
  * @returns {Promise} 回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息
  * @example
  *
- * import wsm from 'w-scan-dep'
+ * import wsd from 'w-scan-dep'
  *
  * async function test() {
  *
  *     let fpIn = './test/prj/package.json'
  *     let fdOut = './test/output'
- *     let opt = { install: true }
  *
- *     let r = await wsm(fpIn, fdOut, opt)
+ *     let r = await wsd(fpIn, fdOut)
  *     console.log(r)
  *     // => 'ok'
  *
@@ -140,15 +136,14 @@ function serializeUpdateList(ul) {
  *     })
  *
  */
-async function WScanDep(fpIn, fdOut, opt = {}) {
+async function WScanDep(fpIn, fdOut) {
     const log = (m) => console.log(m)
-    const install = opt.install === true   // 是否 npm install(預設不裝,掃既有 node_modules)
     const now = new Date()
     const date = isoDate(now)
 
     const pkgJson = await resolvePackageJson(fpIn)
-    const srcDir = dirname(pkgJson)
     const outDir = resolve(fdOut)
+    const testDir = join(outDir, 'test')   // 全新安裝之掃描目標(與 tools 分離, 避免 syft 編目掃描工具自身之 exe)
     const scanDir = join(outDir, 'scan')   // syft/grype/osv 原始產物
     const picsDir = join(outDir, 'pics')   // ex-sbom 截圖
     const toolsDir = join(outDir, 'tools') // 掃描工具(隨 fdOut 交付業主;各次掃描工具版本可能不同,不跨次共用)
@@ -157,35 +152,20 @@ async function WScanDep(fpIn, fdOut, opt = {}) {
     log(' WScanDep 依賴套件漏洞掃描')
     log(`  package.json：${pkgJson}`)
     log(`  輸出資料夾：${outDir}`)
-    log(`  安裝模式：${install ? 'npm install 全新安裝後掃描' : '掃描來源既有 node_modules(不安裝)'}`)
+    log(`  掃描目標：${testDir}(複製 package.json 全新安裝)`)
     log('════════════════════════════════════════════')
 
     await mkdir(outDir, { recursive: true })
 
-    // 1) 決定掃描目標:install 則複製+安裝至 fdOut;否則掃來源既有 node_modules
-    let scanTarget
-    if (install) {
-        await copyFile(pkgJson, join(outDir, 'package.json'))
-        const lock = join(srcDir, 'package-lock.json')
-        if (await exists(lock)) {
-            await copyFile(lock, join(outDir, 'package-lock.json'))
-            log('[copy] 已複製 package.json 與 package-lock.json')
-        } else {
-            log('[copy] 已複製 package.json(來源無 package-lock.json)')
-        }
-        log('[npm] 安裝相依(npm install)...')
-        const ni = spawnSync('npm install --no-audit --no-fund', {
-            cwd: outDir, shell: true, stdio: 'inherit',
-        })
-        if (ni.status !== 0) throw new Error(`npm install 失敗(exit ${ni.status})`)
-        scanTarget = outDir
-    } else {
-        if (!await exists(join(srcDir, 'node_modules'))) {
-            throw new Error(`opt.install 未啟用,但來源資料夾無 node_modules:${srcDir}\n請先於來源安裝相依,或改以 opt.install=true 執行。`)
-        }
-        scanTarget = srcDir
-        log(`[scan] 掃描來源既有 node_modules：${srcDir}`)
-    }
+    // 1) 複製 package.json 至 fdOut/test 並全新安裝(不複製 lock, 由 npm 重新解析產出 package-lock.json 與 node_modules)
+    await mkdir(testDir, { recursive: true })
+    await copyFile(pkgJson, join(testDir, 'package.json'))
+    log('[npm] 於 test 全新安裝相依(npm install)...')
+    const ni = spawnSync('npm install --no-audit --no-fund', {
+        cwd: testDir, shell: true, stdio: 'inherit',
+    })
+    if (ni.status !== 0) throw new Error(`npm install 失敗(exit ${ni.status})`)
+    const scanTarget = testDir
 
     // 2) 下載最新版工具並掃描
     log('[tools] 下載/檢查最新版掃描工具 ...')
@@ -251,7 +231,7 @@ export default WScanDep
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Jul 23 2026 14:13:41 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Jul 23 2026 17:47:38 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

@@ -21,15 +21,14 @@ npm i w-scan-dep
 #### Example for collection
 > **Link:** [[dev source code](https://github.com/yuda-lyu/w-scan-dep/blob/master/g.mjs)]
 ```alias
-import wsm from 'w-scan-dep'
+import wsd from 'w-scan-dep'
 
 async function test() {
 
     let fpIn = './test/prj/package.json'
     let fdOut = './test/output'
-    let opt = { install: true }
 
-    let r = await wsm(fpIn, fdOut, opt)
+    let r = await wsd(fpIn, fdOut)
     console.log(r)
     // => 'ok'
 
