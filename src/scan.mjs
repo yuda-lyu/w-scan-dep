@@ -1,6 +1,6 @@
 // 掃描執行:syft 產 SBOM → grype + osv-scanner 依各自資料庫判斷風險套件。
 // 除人類可讀之 table/markdown 外,另產 json 供報告端解析出「被標注漏洞之套件清單」。
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { basename, join } from 'node:path'
 import { OUTPUT_DIR } from './config.mjs'
@@ -9,10 +9,10 @@ function run(exe, args, label) {
     const r = spawnSync(exe, args, {
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
-        env: { ...process.env, NO_COLOR: '1' },   // 關閉 grype 等之 ANSI 色碼
+        env: { ...process.env, NO_COLOR: '1' }, // 關閉 grype 等之 ANSI 色碼
     })
     if (r.error) throw new Error(`${label} 執行錯誤: ${r.error.message}`)
-    return r   // 呼叫端自行判斷 status(osv-scanner 有漏洞時回非 0)
+    return r // 呼叫端自行判斷 status(osv-scanner 有漏洞時回非 0)
 }
 
 // syft:產 spdx-json 與 cyclonedx-json
@@ -54,7 +54,8 @@ export async function runGrype(grypeExe, cdxPath, outDir = OUTPUT_DIR, log = con
             severity: m.vulnerability?.severity,
             fixedIn: (m.vulnerability?.fix?.versions || []).join(', '),
         }))
-    } catch (e) {
+    }
+    catch (e) {
         log(`[grype] json 解析警告: ${e.message}`)
     }
     return { tablePath, jsonPath, matches }
@@ -65,12 +66,22 @@ export async function runOsv(osvExe, cdxPath, outDir = OUTPUT_DIR, log = console
     const mdPath = join(outDir, 'report(osv).md')
     const jsonPath = join(outDir, 'osv.json')
     log('[osv-scanner] 漏洞掃描 ...')
+    // 先刪上一次之輸出:osv-scanner 於 exit 127(執行錯誤)、128(SBOM 無套件)時不寫輸出檔、保留既有檔
+    // (2026-10-02 實測 v2.4.0),未刪則重跑時讀到上一次之掃描結果
+    await rm(mdPath, { force: true })
+    await rm(jsonPath, { force: true })
     // osv-scanner 對每種格式各跑一次(--output-file 僅接單一輸出)
-    run(osvExe, ['-L', cdxPath, '--format=markdown', `--output-file=${mdPath}`], 'osv-scanner')
-    run(osvExe, ['-L', cdxPath, '--format=json', `--output-file=${jsonPath}`], 'osv-scanner')
+    // 離開碼 0:無漏洞、1:有漏洞、128:SBOM 無套件(無輸出檔,視為無漏洞);其餘為執行錯誤
+    for (const [fmt, out] of [['markdown', mdPath], ['json', jsonPath]]) {
+        const r = run(osvExe, ['-L', cdxPath, `--format=${fmt}`, `--output-file=${out}`], 'osv-scanner')
+        if (![0, 1, 128].includes(r.status)) throw new Error(`osv-scanner 失敗 (code ${r.status}): ${r.stderr}`)
+    }
 
     let mdText = ''
-    try { mdText = (await readFile(mdPath, 'utf8')).trim() } catch { /* 無漏洞時可能無檔 */ }
+    try {
+        mdText = (await readFile(mdPath, 'utf8')).trim()
+    }
+    catch { /* SBOM 無套件(exit 128)時無檔 */ }
 
     // 解析 json → 被標注漏洞之套件清單
     const packages = []
@@ -93,7 +104,8 @@ export async function runOsv(osvExe, cdxPath, outDir = OUTPUT_DIR, log = console
                 }
             }
         }
-    } catch (e) {
+    }
+    catch (e) {
         log(`[osv-scanner] json 解析警告: ${e.message}`)
     }
     return { mdPath, jsonPath, mdText, packages }
@@ -121,15 +133,23 @@ export async function loadScan(outDir = OUTPUT_DIR, log = console.log) {
     try {
         const j = JSON.parse(await readFile(grypeJson, 'utf8'))
         matches = (j.matches || []).map((m) => ({
-            name: m.artifact?.name, version: m.artifact?.version,
-            id: m.vulnerability?.id, severity: m.vulnerability?.severity,
+            name: m.artifact?.name,
+            version: m.artifact?.version,
+            id: m.vulnerability?.id,
+            severity: m.vulnerability?.severity,
             fixedIn: (m.vulnerability?.fix?.versions || []).join(', '),
         }))
-    } catch (e) { throw new Error(`載入 grype.json 失敗:${e.message}(請先完整掃描一次)`) }
+    }
+    catch (e) {
+        throw new Error(`載入 grype.json 失敗:${e.message}(請先完整掃描一次)`)
+    }
 
     const packages = []
     let mdText = ''
-    try { mdText = (await readFile(osvMd, 'utf8')).trim() } catch { /* 無漏洞可能無檔 */ }
+    try {
+        mdText = (await readFile(osvMd, 'utf8')).trim()
+    }
+    catch { /* 無漏洞可能無檔 */ }
     try {
         const j = JSON.parse(await readFile(osvJson, 'utf8'))
         for (const res of j.results || []) {
@@ -138,7 +158,10 @@ export async function loadScan(outDir = OUTPUT_DIR, log = console.log) {
                 if (vulns.length) packages.push({ name: p.package?.name, version: p.package?.version, ecosystem: p.package?.ecosystem, vulns })
             }
         }
-    } catch (e) { throw new Error(`載入 osv.json 失敗:${e.message}(請先完整掃描一次)`) }
+    }
+    catch (e) {
+        throw new Error(`載入 osv.json 失敗:${e.message}(請先完整掃描一次)`)
+    }
 
     return {
         syft: { spdx, cdx },
