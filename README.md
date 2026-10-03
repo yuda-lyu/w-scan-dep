@@ -46,4 +46,15 @@ test()
     })
 ```
 
+#### Shared tools folder for multiple projects
+```alias
+let r = await wsd(fpIn, fdOut, { fdTools: './test/tools' })
+```
+
+> `opt.fdTools`：掃描工具之下載與版本快取改用該資料夾，多個輸出資料夾共用同一份，此時 `fdOut` 不產出 `tools/`；不可位於 `fdOut` 之 `test`、`pics` 或 `exsbom-work` 內。
+
+> 服務埠：ex-sbom 自 18080 起自動選用 18080～18180 中第一個可用之埠，不需關閉占用 8080 之程式。同時掃描多個專案時，須以不同 node 程序、不同 `fdOut` 執行。
+
+> Windows 防火牆：ex-sbom 執行時監聽全部網路介面，防火牆對每個新的執行檔路徑會詢問一次是否允許存取(改埠不會再詢問)。選「取消」即可，掃描只經本機連線、不受影響；選「允許」則掃描期間 ex-sbom 對網路開放。共用工具資料夾後，同一版本只在第一次詢問。
+
 > 僅支援 Windows：掃描工具（syft / grype / osv-scanner / ex-sbom）皆自 GitHub latest release 下載 Windows 版執行檔。

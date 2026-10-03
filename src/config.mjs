@@ -13,8 +13,11 @@ export const OUTPUT_DIR = join(ROOT, 'output')        // syft / grype / osv 產�
 export const SHOTS_DIR = join(ROOT, 'shots')          // ex-sbom 截圖
 export const TMP_DIR = join(ROOT, 'tmp')              // 暫存(§11.2)
 
-// ex-sbom 網頁服務埠(工具寫死 8080,不可改)
-export const EXSBOM_PORT = 8080
+// ex-sbom 網頁服務埠:自 FIRST 起依序選用第一個可用者(ex-sbom 讀 PORT 環境變數,v0.2.0 main.go:56-59)。
+// 刻意避開 8080:為前端開發伺服器常用埠(Vue CLI、webpack-dev-server 自動找埠亦自 8080 往上),
+// 掃描期間占用會使其無法啟動(2026-10-03,見 建議w-scan-dep修正.md 與三審複審)
+export const EXSBOM_PORT_FIRST = 18080
+export const EXSBOM_PORT_LAST = 18180
 
 // 掃描工具下載定義:每個工具自 GitHub latest release 抓對應 Windows 資產。
 // kind='zip' 需解壓後取 exe;kind='exe' 為直接下載之單一執行檔。

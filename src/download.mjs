@@ -1,8 +1,9 @@
 // 掃描工具下載:自 GitHub latest release 取當前最新版,依版本快取。
 // 已存在對應版本之 exe 即略過下載(滿足「取最新版」又不重複下載);
 // 傳 force=true 可強制重抓。zip 資產以 Windows 內建 bsdtar 解壓。
-import { mkdir, writeFile, access, rm, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+// (2026-10-02 起下載與解壓於暫存夾進行,完成後才改名為正式版本夾,見 installVerDir)
+import { mkdir, writeFile, access, rm, readdir, rename, rmdir } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { TOOLS_DIR } from './config.mjs'
 
@@ -59,6 +60,37 @@ async function findFile(dir, name) {
     return null
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// 將下載完成之暫存夾改名為正式版本夾,回傳是否由本次放入(false 表示他程序已先完成,沿用之)。
+// 下載與解壓一律在暫存夾進行、完成才改名:中斷或失敗不會在正式路徑留下殘缺執行檔
+// (否則下次以「exe 存在」判為快取而永久沿用);多程序共用 toolsDir(opt.fdTools)同時下載同版本時先改名者勝出。
+// Windows 防毒會短暫鎖定剛寫入之執行檔,改名回 EPERM/EACCES/EBUSY 時重試(同 graceful-fs 之作法);
+// 目標已存在時 Windows 亦回 EPERM,故每次先判斷版本夾現況。
+export async function installVerDir(tmpDir, verDir, exeRel, { force = false, timeout = 15000 } = {}) {
+    const t0 = Date.now()
+    for (let i = 0; ; i++) {
+        try {
+            await rename(tmpDir, verDir)
+            return true
+        }
+        catch (e) {
+            if (!force && await exists(join(verDir, exeRel))) return false
+            if (Date.now() - t0 > timeout) throw e
+            if (await exists(verDir)) {
+                // 無執行檔之殘缺版本夾,或 force 重抓
+                await rm(verDir, { recursive: true, force: true })
+            }
+            else if (['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) {
+                await sleep(Math.min(200, 20 * (i + 1)))
+            }
+            else {
+                throw e
+            }
+        }
+    }
+}
+
 // 確保單一工具就緒,回傳 { key, version, exePath }
 export async function ensureTool(tool, { force = false, log = console.log, toolsDir = TOOLS_DIR } = {}) {
     log(`[${tool.key}] 查詢最新版本...`)
@@ -75,21 +107,34 @@ export async function ensureTool(tool, { force = false, log = console.log, tools
     const asset = (rel.assets || []).find((a) => tool.matchAsset(a.name))
     if (!asset) throw new Error(`[${tool.key}] ${version} 找不到符合的 Windows 資產`)
 
-    await rm(verDir, { recursive: true, force: true })
-    await mkdir(verDir, { recursive: true })
-    log(`[${tool.key}] 下載 ${asset.name} (${version}) ...`)
-
-    if (tool.kind === 'zip') {
-        const zipPath = join(verDir, asset.name)
-        const bytes = await downloadTo(asset.browser_download_url, zipPath)
-        log(`[${tool.key}] 下載完成 ${(bytes / 1048576).toFixed(1)}MB,解壓中...`)
-        const found = await unzipAndFindExe(zipPath, verDir, tool.exeName)
-        await rm(zipPath, { force: true })
-        return { key: tool.key, version, exePath: found }
-    } else {
-        const bytes = await downloadTo(asset.browser_download_url, exePath)
-        log(`[${tool.key}] 下載完成 ${(bytes / 1048576).toFixed(1)}MB`)
-        return { key: tool.key, version, exePath }
+    // 暫存夾置於 <工具>/.tmp/ 下,不與版本夾並列,避免被當成某一版本
+    const tmpRoot = join(toolsDir, tool.key, '.tmp')
+    const tmpDir = join(tmpRoot, `${version}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    await mkdir(tmpDir, { recursive: true })
+    try {
+        log(`[${tool.key}] 下載 ${asset.name} (${version}) ...`)
+        let tmpExe
+        if (tool.kind === 'zip') {
+            const zipPath = join(tmpDir, asset.name)
+            const bytes = await downloadTo(asset.browser_download_url, zipPath)
+            log(`[${tool.key}] 下載完成 ${(bytes / 1048576).toFixed(1)}MB,解壓中...`)
+            tmpExe = await unzipAndFindExe(zipPath, tmpDir, tool.exeName)
+            await rm(zipPath, { force: true })
+        }
+        else {
+            tmpExe = join(tmpDir, tool.exeName)
+            const bytes = await downloadTo(asset.browser_download_url, tmpExe)
+            log(`[${tool.key}] 下載完成 ${(bytes / 1048576).toFixed(1)}MB`)
+        }
+        const exeRel = relative(tmpDir, tmpExe)
+        if (!await installVerDir(tmpDir, verDir, exeRel, { force })) {
+            log(`[${tool.key}] ${version} 已由其他程序先完成下載,沿用之`)
+        }
+        return { key: tool.key, version, exePath: join(verDir, exeRel) }
+    }
+    finally {
+        await rm(tmpDir, { recursive: true, force: true }) // 改名成功後已不存在,失敗時清除
+        await rmdir(tmpRoot).catch(() => {}) // 空了才刪;他程序仍在下載時非空,略過
     }
 }
 
