@@ -16,7 +16,7 @@ async function test() {
     //   result.md 掃描報告
     //   待更新套件.md 連鎖更新清單
     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖
-    //   tools/ 本次掃描使用之工具執行檔(syft/grype/osv-scanner/ex-sbom,依版本存放)
+    //   掃描工具(syft/grype/osv-scanner/ex-sbom)存於快取(bin-cache/或W_BIN_CACHE), 不在fdOut內, 見README〈外部執行檔〉
 
 }
 test()

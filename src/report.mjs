@@ -38,7 +38,7 @@ export function buildReport({ target, toolVersions, scan, exsbom, date, picsPref
     L.push(`- 掃描日期：${date}`)
     L.push(`- 掃描目標：\`${target}\``)
     L.push('')
-    L.push('本次掃描所下載使用之各工具版本（皆為執行當下之最新版，供業主查核）：')
+    L.push('本次掃描所使用之各工具版本（取自執行當下之主幹清單 bin/manifest.json 所載之廠商發布版本，下載後已校驗 SHA-256 與大小，供業主查核）：')
     L.push('')
     L.push('| 工具 | 版本 | 來源 |')
     L.push('| --- | --- | --- |')

@@ -1,0 +1,22 @@
+node_modules
+.agents
+.opencode
+.claude
+CLAUDE*.md
+AGENTS*.md
+.env
+
+tmp
+test/_tmp
+test/output
+
+syft.spdx.json
+
+# 外部執行檔不入 npm 包(規格 S1、S5):bin/ 只有 manifest.json 入包(基準清單);快取與測試暫存夾不入包
+/bin/*
+!/bin/manifest.json
+/bin-cache/
+/test/_tmp/
+
+# 指引要求文件入 git 版控、不入 npm 包(2026-10-22)
+sgud

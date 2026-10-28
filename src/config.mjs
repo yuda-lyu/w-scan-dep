@@ -1,4 +1,4 @@
-// 全域設定:路徑錨點,掃描工具下載定義,已知套件說明
+// 全域設定:路徑錨點,掃描工具定義,已知套件說明
 // 路徑錨點採「腳本所在資料夾」(fileURLToPath),使掃描工具之產物一律落在
 // 本掃描專案資料夾,不隨呼叫者 cwd 飄移(§10.1 場景 B:套件自帶工作資料)。
 import { fileURLToPath } from 'node:url'
@@ -8,7 +8,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export const ROOT = resolve(__dirname, '..')          // 掃描專案根目錄
 
 // 產出目錄(皆錨定於 ROOT)
-export const TOOLS_DIR = join(ROOT, 'tools')          // 下載之掃描工具(依版本快取)
 export const OUTPUT_DIR = join(ROOT, 'output')        // syft / grype / osv 產物
 export const SHOTS_DIR = join(ROOT, 'shots')          // ex-sbom 截圖
 export const TMP_DIR = join(ROOT, 'tmp')              // 暫存(§11.2)
@@ -19,41 +18,13 @@ export const TMP_DIR = join(ROOT, 'tmp')              // 暫存(§11.2)
 export const EXSBOM_PORT_FIRST = 18080
 export const EXSBOM_PORT_LAST = 18180
 
-// 掃描工具下載定義:每個工具自 GitHub latest release 抓對應 Windows 資產。
-// kind='zip' 需解壓後取 exe;kind='exe' 為直接下載之單一執行檔。
+// 掃描工具(外部執行檔):key、廠商 repo(報告引用)、執行檔名(須與 bin/manifest.json 之 name 相同)。
+// 取得方式(來源網址、sha256、大小)不在此定義,見 ensureBins.mjs 與 bin/manifest.json;更新版本用 toolg/genBinManifest.mjs。
 export const TOOLS = [
-    {
-        key: 'syft',
-        repo: 'anchore/syft',
-        kind: 'zip',
-        // syft_1.49.0_windows_amd64.zip
-        matchAsset: (n) => /_windows_amd64\.zip$/.test(n),
-        exeName: 'syft.exe',
-    },
-    {
-        key: 'grype',
-        repo: 'anchore/grype',
-        kind: 'zip',
-        // grype_0.116.0_windows_amd64.zip
-        matchAsset: (n) => /_windows_amd64\.zip$/.test(n),
-        exeName: 'grype.exe',
-    },
-    {
-        key: 'osv-scanner',
-        repo: 'google/osv-scanner',
-        kind: 'exe',
-        // osv-scanner_windows_amd64.exe
-        matchAsset: (n) => n === 'osv-scanner_windows_amd64.exe',
-        exeName: 'osv-scanner.exe',
-    },
-    {
-        key: 'ex-sbom',
-        repo: 'nics-tw/ex-sbom',
-        kind: 'exe',
-        // ex-sbom.exe
-        matchAsset: (n) => n === 'ex-sbom.exe',
-        exeName: 'ex-sbom.exe',
-    },
+    { key: 'syft', repo: 'anchore/syft', exeName: 'syft.exe' },
+    { key: 'grype', repo: 'anchore/grype', exeName: 'grype.exe' },
+    { key: 'osv-scanner', repo: 'google/osv-scanner', exeName: 'osv-scanner.exe' },
+    { key: 'ex-sbom', repo: 'nics-tw/ex-sbom', exeName: 'ex-sbom.exe' },
 ]
 
 // 已知套件之人工說明(領域知識,非掃描器輸出)。

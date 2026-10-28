@@ -11,3 +11,6 @@ test/_tmp
 test/output
 
 syft.spdx.json
+
+# 外部執行檔之快取(規格 S5)
+/bin-cache/

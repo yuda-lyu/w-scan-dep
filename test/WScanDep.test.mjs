@@ -4,9 +4,13 @@ import path from 'path'
 import http from 'http'
 import { spawn, spawnSync } from 'child_process'
 import wsd from '../src/WScanDep.mjs'
+import ensureBins from '../src/ensureBins.mjs'
 import { captureExSbom, listeningPorts, excludedPorts, pickPort } from '../src/exsbom.mjs'
 
 
+//完整掃描(連網): 經 ensureBins 取得掃描工具(首次自 GitHub 下載並校驗, 存於 bin-cache/ 或 W_BIN_CACHE),
+//另需 npm registry 與 grype/osv 漏洞資料庫。ex-sbom 自快取路徑啟動, Windows 防火牆對新路徑會詢問一次(選「取消」即可)。
+//無網路之 ensureBins 行為見 api-ensureBins.test.mjs、api-wsdEntry.test.mjs(假廠商檔與本機伺服器)
 describe('WScanDep', function() {
     this.timeout(1800000) //首次執行須下載掃描工具與npm install,耗時較久
 
@@ -26,59 +30,19 @@ describe('WScanDep', function() {
         assert.strict.ok(fs.existsSync(`${fdOut}/result.md`))
         assert.strict.ok(fs.existsSync(`${fdOut}/待更新套件.md`))
         assert.strict.ok(fs.existsSync(`${fdOut}/pics`))
+
+        //result.json 記各工具之版本標籤(取自清單網址, 由 ensureBins 取得之檔推得)
+        assert.strict.deepEqual(Object.keys(j.tools), ['syft', 'grype', 'osv-scanner', 'ex-sbom'])
+        for (let v of Object.values(j.tools)) {
+            assert.strict.match(v, /^v\d+\.\d+\.\d+$/)
+        }
     })
 
-    //opt.fdTools 不可位於 fdOut/test(syft 掃描目標)內,於任何寫入前拒絕
-    it('opt.fdTools 位於 fdOut/test 內時拒絕,且不建立 fdOut', async function() {
+    //第三參數(原 opt.fdTools)已移除:明確拒絕, 且於任何寫入前
+    it('第三參數(原 opt.fdTools)已移除:拒絕,且不建立 fdOut', async function() {
         let out = './test/_tmp/WScanDep-guard/out'
-        await assert.rejects(wsd(fpIn, out, { fdTools: `${out}/test/tools` }), /opt\.fdTools 不可位於輸出資料夾之 test 內/)
+        await assert.rejects(wsd(fpIn, out, { fdTools: `${out}/test/tools` }), /不接受第三參數/)
         assert.strict.ok(!fs.existsSync(out))
-    })
-
-    //opt.fdTools:同一 fdTools 對兩個不同輸出資料夾各掃描一次,第二次不再下載工具;
-    //有給 fdTools 時輸出資料夾不產出 tools
-    it('opt.fdTools 共用工具資料夾:第二個輸出資料夾不再下載工具,且不產出 tools', async function() {
-        //沿用上一案例之 test/output/tools,不以新路徑執行 ex-sbom(Windows 防火牆對新執行檔路徑會再詢問)
-        let fdTools = './test/output/tools'
-        let root = './test/_tmp/WScanDep-fdTools'
-        fs.rmSync(root, { recursive: true, force: true })
-        try {
-            assert.strict.strictEqual(await wsd(fpIn, `${root}/a`, { fdTools }), 'ok')
-
-            let logs = []
-            let log0 = console.log
-            console.log = (...args) => {
-                logs.push(args.join(' '))
-                log0(...args)
-            }
-            let r
-            try {
-                r = await wsd(fpIn, `${root}/b`, { fdTools })
-            }
-            finally {
-                console.log = log0
-            }
-            assert.strict.strictEqual(r, 'ok')
-
-            //第二次:四項工具皆沿用快取,無下載
-            for (let k of ['syft', 'grype', 'osv-scanner', 'ex-sbom']) {
-                assert.strict.ok(logs.some((m) => m.startsWith(`[${k}] 已有最新版`)), `${k} 應沿用快取`)
-                assert.strict.ok(!logs.some((m) => m.startsWith(`[${k}] 下載`)), `${k} 不應下載`)
-            }
-            assert.strict.ok(logs.some((m) => m.includes(`工具資料夾：${path.resolve(fdTools)}(opt.fdTools 共用)`)))
-
-            //兩個輸出資料夾皆有報告、皆不產出 tools,所用工具版本相同
-            for (let d of ['a', 'b']) {
-                assert.strict.ok(fs.existsSync(`${root}/${d}/result.md`))
-                assert.strict.ok(!fs.existsSync(`${root}/${d}/tools`))
-            }
-            let ja = JSON.parse(fs.readFileSync(`${root}/a/result.json`, 'utf8'))
-            let jb = JSON.parse(fs.readFileSync(`${root}/b/result.json`, 'utf8'))
-            assert.strict.deepEqual(jb.tools, ja.tools)
-        }
-        finally {
-            fs.rmSync(root, { recursive: true, force: true })
-        }
     })
 
 })
@@ -97,7 +61,12 @@ describe('captureExSbom', function() {
     let quiet = () => {}
     let exe = null
 
-    let findExe = () => {
+    //ex-sbom 取自 ensureBins 之快取(離線, 須已校驗; 完整掃描過一次即有); 否則沿用舊版遺留之 test/output/tools(該路徑已有 Windows 防火牆規則, 不以新路徑啟動)
+    let findExe = async () => {
+        try {
+            return (await ensureBins({ offline: true, names: 'ex-sbom.exe' }))['ex-sbom.exe']
+        }
+        catch { /* 快取尚無 */ }
         let fd = path.resolve('./test/output/tools/ex-sbom')
         if (!fs.existsSync(fd)) return null
         for (let v of fs.readdirSync(fd)) {
@@ -114,8 +83,8 @@ describe('captureExSbom', function() {
     let freeBase = (from) => pickPort(listeningPorts(), excludedPorts(), from, 18180)
     let pids0
 
-    before(function() {
-        exe = findExe()
+    before(async function() {
+        exe = await findExe()
         if (!exe) this.skip() //尚未完整掃描過、無已下載之 ex-sbom
     })
 

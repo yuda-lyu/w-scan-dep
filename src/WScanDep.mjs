@@ -5,12 +5,14 @@
 //  一併根治「syft 整樹編目把剛下載之掃描工具 exe 一起掃進 SBOM」之自掃污染)
 // (2026-10-02 修正: 安裝前先刪除 fdOut/test 內上一次之 package-lock.json 與 node_modules 並回驗,
 //  否則重跑時 npm 依舊鎖定檔增量安裝,掃到的是上一次之相依樹)
-// (2026-10-02 擴充 opt.fdTools: 工具可改放指定之共用資料夾,多個 fdOut 共用同一份,見 layout.mjs)
 // (2026-10-03 修正: ex-sbom 改用 fdOut/exsbom-work 內之專用工作目錄、服務埠自 18080 起自動選用並以 PID 確認身分,見 exsbom.mjs;
 //  同時掃描多個專案須以不同 node 程序、不同 fdOut 執行)
+// (2026-10-29 外部執行檔改依 bin/manifest.json 經 ensureBins(wsemi fsEnsureBins)取得並校驗,存於快取而非 fdOut/tools;
+//  移除 opt.fdTools(改由環境變數 W_BIN_CACHE 指定共用快取),見 README〈外部執行檔〉與〈Breaking changes〉)
 // 流程:
+//   0) 經 ensureBins 取得 syft/grype/osv-scanner/ex-sbom(清單為 bin/manifest.json,校驗 SHA-256 與大小;取不到時即中止,不待 npm install 後才發現)
 //   1) 清除 fdOut/test 上次安裝殘留,複製 package.json 並 npm install(產出 package-lock.json 與 node_modules)
-//   2) 下載最新版 syft/grype/osv-scanner/ex-sbom 至 fdOut/tools(隨產出交付業主;有給 opt.fdTools 時改用該資料夾)並掃描 fdOut/test
+//   2) 以上述工具掃描 fdOut/test
 //   3) ex-sbom 各漏洞套件截圖存 fdOut/pics/*.png
 //   4) 檢測數據(含截圖相對路徑 ./pics、結果文字)寫入 fdOut/result.json
 //   5) 產製 md 報告(圖以相對路徑 ./pics)寫入 fdOut/result.md
@@ -18,11 +20,11 @@
 // 回傳 'ok'。
 import { mkdir, copyFile, writeFile, access, stat } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
-import { join, basename, resolve } from 'node:path'
-import { TOOLS } from './config.mjs'
-import { resolveLayout } from './layout.mjs'
+import { join, basename, dirname, resolve } from 'node:path'
+import { resolveLayout, assertToolsOutside } from './layout.mjs'
 import { clearNpmState, NPM_STATE } from './install.mjs'
-import { ensureAllTools } from './download.mjs'
+import ensureBins from './ensureBins.mjs'
+import { readToolVersions } from './toolVersions.mjs'
 import { runScan } from './scan.mjs'
 import { captureExSbom } from './exsbom.mjs'
 import { buildReport } from './report.mjs'
@@ -70,13 +72,14 @@ function serializeUpdateList(ul) {
 /**
  * 依賴套件漏洞掃描
  *
- * 自動下載最新版syft、grype、osv-scanner、ex-sbom，掃描指定專案之依賴套件，並將檢測數據、markdown報告、連鎖更新清單與ex-sbom各漏洞套件截圖輸出至指定資料夾，僅支援Windows
+ * 經ensureBins取得syft、grype、osv-scanner、ex-sbom(依bin/manifest.json校驗SHA-256與大小，首次使用時下載並存於快取)，掃描指定專案之依賴套件，並將檢測數據、markdown報告、連鎖更新清單與ex-sbom各漏洞套件截圖輸出至指定資料夾，僅支援Windows
+ *
+ * 外部執行檔不含於npm包，快取預設為套件根之bin-cache/，可由環境變數W_BIN_CACHE改位置(多個專案共用同一份)；W_BIN_MIRROR指定離線鏡像，W_BIN_OFFLINE=1時不連網；部署前可預先呼叫WScanDep.ensureBins()，見README〈外部執行檔〉。
+ * ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行
  *
  * @class
  * @param {String} fpIn 輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串
- * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md、pics/*.png與tools/(本次使用之掃描工具，有給opt.fdTools時改放該資料夾)
- * @param {Object} [opt={}] 輸入設定物件，預設{}
- * @param {String} [opt.fdTools=''] 輸入共用之掃描工具資料夾路徑字串，有給時工具之下載與版本快取改用該資料夾，多個輸出資料夾共用同一份(同版本執行檔路徑固定，Windows防火牆只於首次詢問)，此時fdOut不產出tools/；不可位於fdOut之test、pics或exsbom-work內，預設''代表使用fdOut/tools。ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行
+ * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此
  * @returns {Promise} 回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息
  * @example
  *
@@ -96,10 +99,9 @@ function serializeUpdateList(ul) {
  *     //   result.md 掃描報告
  *     //   待更新套件.md 連鎖更新清單
  *     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖
- *     //   tools/ 本次掃描使用之工具執行檔(syft/grype/osv-scanner/ex-sbom,依版本存放)
  *
- *     // 多個專案共用工具資料夾(免各輸出資料夾各下載一份、Windows防火牆逐一詢問),此時fdOut不產出tools/:
- *     // let r = await wsd(fpIn, fdOut, { fdTools: './test/tools' })
+ *     // 部署前預先取得掃描工具(連網機器設W_BIN_CACHE=<資料夾>後執行，該資料夾即可作為離線鏡像W_BIN_MIRROR):
+ *     // let bins = await wsd.ensureBins()
  *
  * }
  * test()
@@ -108,22 +110,39 @@ function serializeUpdateList(ul) {
  *     })
  *
  */
-async function WScanDep(fpIn, fdOut, opt = {}) {
+async function WScanDep(fpIn, fdOut, opt) {
+    // 第三參數(原 opt.fdTools)已移除:明確拒絕,避免舊呼叫端以為工具仍放在其指定之資料夾
+    if (opt !== undefined && opt !== null) {
+        throw new Error('WScanDep 已不接受第三參數 opt(原 opt.fdTools 已移除);掃描工具存於快取,改以環境變數 W_BIN_CACHE 指定,見 README〈外部執行檔〉')
+    }
+
     const log = (m) => console.log(m)
     const now = new Date()
     const date = isoDate(now)
 
     const pkgJson = await resolvePackageJson(fpIn)
-    // 產物落點與工具資料夾(含 opt.fdTools 之防呆,於任何寫入之前)
-    const { outDir, testDir, scanDir, picsDir, exsbomDir, toolsDir, shared } = resolveLayout(fdOut, opt)
+    const layout = resolveLayout(fdOut)
+    const { outDir, testDir, scanDir, picsDir, exsbomDir } = layout
 
     log('════════════════════════════════════════════')
     log(' WScanDep 依賴套件漏洞掃描')
     log(`  package.json：${pkgJson}`)
     log(`  輸出資料夾：${outDir}`)
     log(`  掃描目標：${testDir}(複製 package.json 全新安裝)`)
-    log(`  工具資料夾：${toolsDir}${shared ? '(opt.fdTools 共用)' : ''}`)
     log('════════════════════════════════════════════')
+
+    // 0) 經 ensureBins 取得掃描工具(依 bin/manifest.json 校驗;取不到即中止,不待 npm install 數分鐘後才發現)
+    log('[tools] 取得/檢查掃描工具(bin/manifest.json,校驗 SHA-256 與大小)...')
+    const onProgress = (ev) => {
+        if (ev.step === 'manifest' && ev.source === 'baseline') log('[tools] 取不到主幹清單,改用套件內基準清單')
+        else if (ev.step === 'download') log(`[tools] 下載 ${ev.name}:${ev.url}`)
+        else if (ev.step === 'extract') log(`[tools] 解壓 ${ev.name}(${ev.member})`)
+    }
+    const bins = await ensureBins({ onProgress })
+    assertToolsOutside(Object.values(bins), layout)
+    const tools = await readToolVersions(bins)
+    log(`  工具快取：${dirname(dirname(bins['syft.exe']))}`)
+    for (const [k, v] of Object.entries(tools)) log(`  ${k} ${v.version}：${v.exePath}`)
 
     await mkdir(outDir, { recursive: true })
 
@@ -139,9 +158,7 @@ async function WScanDep(fpIn, fdOut, opt = {}) {
     if (ni.status !== 0) throw new Error(`npm install 失敗(exit ${ni.status})`)
     const scanTarget = testDir
 
-    // 2) 下載最新版工具並掃描
-    log('[tools] 下載/檢查最新版掃描工具 ...')
-    const tools = await ensureAllTools(TOOLS, { toolsDir, log })
+    // 2) 掃描
     log('[scan] 執行 syft / grype / osv-scanner ...')
     const scan = await runScan(tools, scanTarget, scanDir, log)
 
@@ -187,5 +204,8 @@ async function WScanDep(fpIn, fdOut, opt = {}) {
     log('════════════════════════════════════════════')
     return 'ok'
 }
+
+// ensureBins 以靜態屬性提供(不另加具名匯出,使 UMD 打包後 default 匯出形態不變):供部署前預先取得掃描工具,見 README〈外部執行檔〉
+WScanDep.ensureBins = ensureBins
 
 export default WScanDep

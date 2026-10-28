@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "pkg": "w-scan-dep",
+  "mode": "floating",
+  "repo": "yuda-lyu/w-scan-dep",
+  "note": "主幹模式(規格M5): 執行時取GitHub主幹之本檔, 取不到時用npm包內之基準清單; 由toolg/genBinManifest.mjs產生, 勿手寫",
+  "files": [
+    {
+      "name": "syft.exe",
+      "url": "https://github.com/anchore/syft/releases/download/v1.55.0/syft_1.55.0_windows_amd64.zip",
+      "sha256": "ada4c9b93af575f479ce80fce6629897272a2d41f300a14bc49bace020767ca2",
+      "size": 30025255,
+      "extract": {
+        "type": "zip",
+        "member": "syft.exe",
+        "sha256": "8f9da8a74ca785b3a2b660a0f2503c17ceaa5eebb880fd1cd4395376929bee64",
+        "size": 89968640
+      },
+      "note": "v1.55.0: SHA-256依廠商公告之syft_1.55.0_checksums.txt核對,且與GitHub API之asset digest一致(2026-10-29)"
+    },
+    {
+      "name": "grype.exe",
+      "url": "https://github.com/anchore/grype/releases/download/v0.121.0/grype_0.121.0_windows_amd64.zip",
+      "sha256": "f867bbdc14bd8b0d99b3fc47d839af07480a540072b16896373a8ba32b76f588",
+      "size": 31387635,
+      "extract": {
+        "type": "zip",
+        "member": "grype.exe",
+        "sha256": "4f366a6f8ed46f97280e14ded6acb8711ac49744f99c09214f5e676f34a16ecb",
+        "size": 93601792
+      },
+      "note": "v0.121.0: SHA-256依廠商公告之grype_0.121.0_checksums.txt核對,且與GitHub API之asset digest一致(2026-10-29)"
+    },
+    {
+      "name": "osv-scanner.exe",
+      "url": "https://github.com/google/osv-scanner/releases/download/v2.7.0/osv-scanner_windows_amd64.exe",
+      "sha256": "9964ed64ec9a387391eb4cc006ad5c531154821aef29b793e02c448de4686438",
+      "size": 58999296,
+      "note": "v2.7.0: SHA-256依廠商公告之osv-scanner_SHA256SUMS核對,且與GitHub API之asset digest一致(2026-10-29)"
+    },
+    {
+      "name": "ex-sbom.exe",
+      "url": "https://github.com/nics-tw/ex-sbom/releases/download/v0.2.0/ex-sbom.exe",
+      "sha256": "8a3a6f908a438e29c5efc0e22c920c01403aea97d5812e7876b939aed01e7726",
+      "size": 52121304,
+      "note": "v0.2.0: 廠商未公告checksums,首次下載自算SHA-256(2026-10-29),且與GitHub API之asset digest一致"
+    }
+  ]
+}

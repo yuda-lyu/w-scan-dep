@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li></ul>
     
 </nav>
 
@@ -64,7 +64,7 @@
 
     
 
-    <h4 class="name" id="WScanDep"><span class="type-signature type-signature-async">(async) </span>new WScanDep<span class="signature">(fpIn, fdOut, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+    <h4 class="name" id="WScanDep"><span class="type-signature type-signature-async">(async) </span>new WScanDep<span class="signature">(fpIn, fdOut)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
 
@@ -75,13 +75,15 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>依賴套件漏洞掃描</p>
-<p>自動下載最新版syft、grype、osv-scanner、ex-sbom，掃描指定專案之依賴套件，並將檢測數據、markdown報告、連鎖更新清單與ex-sbom各漏洞套件截圖輸出至指定資料夾，僅支援Windows</p></li></ul></dd>
+<p>經ensureBins取得syft、grype、osv-scanner、ex-sbom(依bin/manifest.json校驗SHA-256與大小，首次使用時下載並存於快取)，掃描指定專案之依賴套件，並將檢測數據、markdown報告、連鎖更新清單與ex-sbom各漏洞套件截圖輸出至指定資料夾，僅支援Windows</p>
+<p>外部執行檔不含於npm包，快取預設為套件根之bin-cache/，可由環境變數W_BIN_CACHE改位置(多個專案共用同一份)；W_BIN_MIRROR指定離線鏡像，W_BIN_OFFLINE=1時不連網；部署前可預先呼叫WScanDep.ensureBins()，見README〈外部執行檔〉。
+ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WScanDep.mjs.html">WScanDep.mjs</a>, <a href="WScanDep.mjs.html#line111">line 111</a>
+        <a href="WScanDep.mjs.html">WScanDep.mjs</a>, <a href="WScanDep.mjs.html#line113">line 113</a>
     </li></ul></dd>
     
 
@@ -144,10 +146,9 @@ async function test() {
     //   result.md 掃描報告
     //   待更新套件.md 連鎖更新清單
     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖
-    //   tools/ 本次掃描使用之工具執行檔(syft/grype/osv-scanner/ex-sbom,依版本存放)
 
-    // 多個專案共用工具資料夾(免各輸出資料夾各下載一份、Windows防火牆逐一詢問),此時fdOut不產出tools/:
-    // let r = await wsd(fpIn, fdOut, { fdTools: './test/tools' })
+    // 部署前預先取得掃描工具(連網機器設W_BIN_CACHE=&lt;資料夾>後執行，該資料夾即可作為離線鏡像W_BIN_MIRROR):
+    // let bins = await wsd.ensureBins()
 
 }
 test()
@@ -171,11 +172,7 @@ test()
         <th>Type</th>
 
         
-        <th>Attributes</th>
-        
 
-        
-        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -201,19 +198,7 @@ test()
             </td>
 
             
-                <td class="attributes">
-                
 
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                </td>
             
 
             <td class="description last"><p>輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串</p></td>
@@ -237,132 +222,10 @@ test()
             </td>
 
             
-                <td class="attributes">
-                
-
-                
-
-                
-                </td>
-            
 
             
-                <td class="default">
-                
-                </td>
-            
 
-            <td class="description last"><p>輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md、pics/*.png與tools/(本次使用之掃描工具，有給opt.fdTools時改放該資料夾)</p></td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>opt</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">Object</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>{}</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>輸入設定物件，預設{}</p>
-                <h6>Properties</h6>
-                
-
-<table class="params">
-    <thead>
-    <tr>
-        
-        <th>Name</th>
-        
-
-        <th>Type</th>
-
-        
-        <th>Attributes</th>
-        
-
-        
-        <th>Default</th>
-        
-
-        <th class="last">Description</th>
-    </tr>
-    </thead>
-
-    <tbody>
-    
-
-        <tr>
-            
-                <td class="name"><code>fdTools</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">String</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>''</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>輸入共用之掃描工具資料夾路徑字串，有給時工具之下載與版本快取改用該資料夾，多個輸出資料夾共用同一份(同版本執行檔路徑固定，Windows防火牆只於首次詢問)，此時fdOut不產出tools/；不可位於fdOut之test、pics或exsbom-work內，預設''代表使用fdOut/tools。ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行</p></td>
-        </tr>
-
-    
-    </tbody>
-</table>
-
-            </td>
+            <td class="description last"><p>輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此</p></td>
         </tr>
 
     
@@ -447,7 +310,7 @@ test()
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Oct 20 2026 00:00:43 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Oct 29 2026 00:56:58 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
