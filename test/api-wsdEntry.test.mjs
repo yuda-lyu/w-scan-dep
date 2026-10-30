@@ -8,6 +8,8 @@ import { syncBuiltinESMExports } from 'node:module'
 import { pathToFileURL } from 'url'
 import { makeRelease, putMirror, makeFakePkg, withEnv } from './tools/fakeBins.mjs'
 import { hangRegistry } from './tools/hangRegistry.mjs'
+import { fakeNpmRegistry } from './tools/fakeNpmRegistry.mjs'
+import { scopePackages, scopeProject, scopeInstalled, scopeNotInstalled } from './tools/scopeFixture.mjs'
 
 
 //規格: 外部執行檔之存放下載校驗與離線(制式規格)§9 套件層測試: 無法注入fetch之入口(主函數WScanDep)須攔截全域fetch並斷言未被呼叫,
@@ -25,7 +27,8 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
     let fakeExSbom = path.resolve('./test/tools/fakeExSbom.mjs')
     let hangTool = path.resolve('./test/tools/hangTool.mjs')
     let cycleSpdx = fs.readFileSync('./test/fixtures/cycle.spdx.json', 'utf8')
-    let ks = ['date', 'source', 'outputDir', 'tools', 'osv', 'grype', 'exsbom', 'updateList']
+    let ks = ['date', 'source', 'outputDir', 'scope', 'tools', 'osv', 'grype', 'exsbom', 'updateList']
+    let scopeMd = '- 掃描範圍：僅 dependencies（正式相依樹，含其所附之執行檔）；devDependencies 之開發與建置工具不在範圍內'
     let ksEx = ['ok', 'error', 'overview', 'components', 'levelSummary', 'removedRelationships']
     let A = null
     let WScanDep = null
@@ -123,7 +126,7 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
             let c = String(cmd)
             if (/^npm install/.test(c)) {
                 let opt = rest.find((v) => v && !Array.isArray(v) && typeof v === 'object')
-                calls.push({ kind: 'npm', cmd: c, cwd: opt && opt.cwd })
+                calls.push({ kind: 'npm', cmd: c, cwd: opt && opt.cwd, env: opt && opt.env, callerInclude: process.env.npm_config_include })
                 return npmMode === 'real' ? spawnBak(cmd, ...rest) : fakeChildOk()
             }
             //playwright 之瀏覽器(ms-playwright 下之 chrome/headless_shell)經同一 child_process 啟動:照常、不記錄
@@ -190,6 +193,10 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         assert.strict.deepStrictEqual(netCalls, []) //未使用全域fetch(回歸為直連GitHub時此處會有請求)
         //osv-scanner對markdown與json各跑一次(scan.mjs runOsv); 掃描工具皆以spawn啟動(kind為tool)
         assert.strict.deepStrictEqual(calls.map((v) => v.kind), ['npm', 'tool', 'tool', 'tool', 'tool', 'spawn'])
+        //掃描範圍只算dependencies(Gitea #27): 隔離安裝只裝正式相依樹, 其餘旗標維持
+        assert.strict.equal(calls[0].cmd, 'npm install --omit=dev --no-audit --no-fund')
+        assert.strict.equal(calls[0].cwd, path.join(out, 'test'))
+        assert.strict.equal(j.scope, 'dependencies')
         let want = ['syft.exe', 'grype.exe', 'osv-scanner.exe', 'ex-sbom.exe'].map((n) => cacheOf(cacheRoot, n))
         assert.strict.deepStrictEqual(calls.slice(1).map((v) => v.cmd), [want[0], want[1], want[2], want[2], want[3]]) //所啟動者即ensureBins回傳之快取路徑
         for (let p of want) {
@@ -259,6 +266,7 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         let j = JSON.parse(fs.readFileSync(path.join(out, 'result.json'), 'utf8'))
         assert.strict.deepStrictEqual(Object.keys(j), ks)
         assert.strict.deepStrictEqual(Object.keys(j.exsbom), ksEx)
+        assert.strict.equal(j.scope, 'dependencies') //掃描範圍欄位(Gitea #27): 截圖失敗時亦照寫
         //三種掃描結果照常寫出
         assert.strict.equal(fs.readFileSync(path.join(out, 'scan', 'syft.spdx.json'), 'utf8'), cycleSpdx)
         assert.strict.deepStrictEqual(j.grype.matches.map((m) => `${m.name}@${m.version} ${m.id}`), ['semver@7.0.0 GHSA-c2qf-rxjj-qqgw'])
@@ -275,6 +283,7 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         assert.strict.equal(fs.existsSync(path.join(out, 'pics')), false)
         assert.strict.equal(fs.existsSync(path.join(out, 'exsbom-work')), false)
         let md = fs.readFileSync(path.join(out, 'result.md'), 'utf8')
+        assert.strict.ok(md.includes(scopeMd), md) //result.md 寫明掃描範圍(Gitea #27)
         assert.strict.ok(md.includes('ex-sbom 截圖失敗，本次無截圖') && !md.includes('](./pics/'), md)
         assert.strict.ok(md.includes('離開碼 2') && md.includes('fatal error: stack overflow'), md) //報告亦見結束原因
         assert.strict.ok(fs.readFileSync(path.join(out, '待更新套件.md'), 'utf8').includes('ex-sbom 截圖失敗，本清單只依 osv-scanner 與 grype'))
@@ -383,6 +392,133 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         assert.strict.deepStrictEqual(netCalls, [])
         assert.strict.equal(fs.existsSync(out), false)
         assert.strict.equal(fs.existsSync(cacheRoot), false) //ensureBins 未執行
+    })
+
+    //建議w-scan-dep調整.md(Gitea #27, 主控裁定 2、3、5): 掃描範圍只算 dependencies。真實 npm 對本機假 registry(夾具 test/tools/scopeFixture.mjs):
+    //devDependencies 及其只在開發樹之相依不落地; 風險套件 semver 同時被正式套件與開發工具引入, 待更新清單(updateList)只剩正式路徑;
+    //result.json 之 scope、result.md 與待更新套件.md 寫明範圍
+    it(`should scan only the dependencies tree: devDependencies are not installed, the update list holds only the production paths, and the scope is stated in result.json, result.md and the update list (Gitea #27)`, async function() {
+        npmMode = 'real'
+        let reg = await fakeNpmRegistry(8998, scopePackages)
+        let cacheRoot = path.join(fdt, 'cache-j')
+        let out = path.join(fdt, 'out-j')
+        let prj = path.join(fdt, 'prj-scope', 'package.json')
+        fs.mkdirSync(path.dirname(prj), { recursive: true })
+        fs.writeFileSync(prj, JSON.stringify(scopeProject))
+        let r
+        try {
+            r = await withEnv({
+                W_BIN_CACHE: cacheRoot,
+                W_BIN_MIRROR: mirror,
+                W_BIN_OFFLINE: '1',
+                npm_config_registry: reg.url,
+                npm_config_cache: path.join(fdt, 'npm-cache-j'),
+                npm_config_update_notifier: 'false',
+            }, () => WScanDep(prj, out))
+        }
+        finally {
+            await reg.close()
+        }
+        assert.strict.equal(r, 'ok')
+        assert.strict.deepStrictEqual(calls.map((v) => v.kind), ['npm', 'tool', 'tool', 'tool', 'tool', 'spawn'])
+        //掃描目標(fdOut/test)只含正式相依樹
+        let nm = path.join(out, 'test', 'node_modules')
+        for (let name of scopeInstalled) {
+            assert.strict.equal(fs.existsSync(path.join(nm, name, 'package.json')), true, `${name} 應被安裝`)
+        }
+        for (let name of scopeNotInstalled) {
+            assert.strict.equal(fs.existsSync(path.join(nm, name)), false, `${name} 不應被安裝`)
+        }
+        let j = JSON.parse(fs.readFileSync(path.join(out, 'result.json'), 'utf8'))
+        assert.strict.deepStrictEqual(Object.keys(j), ks)
+        assert.strict.equal(j.scope, 'dependencies')
+        //待更新清單: semver@7.0.0 之引入路徑只有正式套件 prod-mid, 無開發工具 dev-tool
+        let items = j.updateList.origins.flatMap((o) => o.items.map((v) => `${v.depName}->${v.leafName}@${v.leafVersion}`))
+        assert.strict.deepStrictEqual(items, ['prod-mid->semver@7.0.0'])
+        assert.strict.deepStrictEqual(j.updateList.cascades.map((c) => `${c.leaf}|${c.chainStr}`), ['semver@7.0.0|主系統'])
+        let md = fs.readFileSync(path.join(out, 'result.md'), 'utf8')
+        assert.strict.ok(md.includes(scopeMd), md)
+        let up = fs.readFileSync(path.join(out, '待更新套件.md'), 'utf8')
+        assert.strict.ok(up.includes(scopeMd) && up.includes('prod-mid') && !up.includes('dev-tool'), up)
+    })
+
+    //建議w-scan-dep調整.md(Gitea #27, run02 裁定 1、3): result.json 之 scope: 'dependencies' 必須為真, 不受呼叫端 npm 設定影響。
+    //呼叫端環境設了 npm_config_include=dev／npm_config_production=false(會抵消 --omit=dev)時, 入口照常完成且 dev 套件仍不落地;
+    //交給安裝子行程之環境副本已移除該二項, 而呼叫端之 process.env 不變
+    it(`should keep the dependencies scope true when the caller environment sets npm_config_include=dev and npm_config_production=false (Gitea #27, run02)`, async function() {
+        npmMode = 'real'
+        let reg = await fakeNpmRegistry(8998, scopePackages)
+        let cacheRoot = path.join(fdt, 'cache-k')
+        let out = path.join(fdt, 'out-k')
+        let prj = path.join(fdt, 'prj-scope-env', 'package.json')
+        fs.mkdirSync(path.dirname(prj), { recursive: true })
+        fs.writeFileSync(prj, JSON.stringify(scopeProject))
+        let r
+        try {
+            r = await withEnv({
+                W_BIN_CACHE: cacheRoot,
+                W_BIN_MIRROR: mirror,
+                W_BIN_OFFLINE: '1',
+                npm_config_registry: reg.url,
+                npm_config_cache: path.join(fdt, 'npm-cache-k'),
+                npm_config_update_notifier: 'false',
+                npm_config_include: 'dev',
+                npm_config_production: 'false',
+            }, () => WScanDep(prj, out))
+        }
+        finally {
+            await reg.close()
+        }
+        assert.strict.equal(r, 'ok')
+        assert.strict.equal(calls[0].callerInclude, 'dev') //啟動安裝時呼叫端之 process.env 仍有該設定(只移除子行程副本)
+        assert.strict.ok(calls[0].env && typeof calls[0].env === 'object', 'npm install 須明給子行程環境副本')
+        assert.strict.deepStrictEqual(Object.keys(calls[0].env).filter((k) => /^npm_config_(include|production|dev|also)$/i.test(k)), [])
+        assert.strict.equal(calls[0].env.npm_config_registry, reg.url) //其餘設定照傳
+        let nm = path.join(out, 'test', 'node_modules')
+        for (let name of scopeNotInstalled) {
+            assert.strict.equal(fs.existsSync(path.join(nm, name)), false, `${name} 不應被安裝`)
+        }
+        for (let name of scopeInstalled) {
+            assert.strict.equal(fs.existsSync(path.join(nm, name, 'package.json')), true, `${name} 應被安裝`)
+        }
+        let j = JSON.parse(fs.readFileSync(path.join(out, 'result.json'), 'utf8'))
+        assert.strict.equal(j.scope, 'dependencies')
+    })
+
+    //run02 裁定 2: 安裝後驗證有 dev 套件落地(此處為使用者層設定檔 include[]=dev, 環境變數無從移除)即拋錯, 不得輸出 scope: 'dependencies'
+    //此時未進入掃描(不啟動 syft／grype／osv-scanner／ex-sbom), 不寫出 result.json／result.md／待更新套件.md
+    it(`should reject without writing any result when a dev package is installed in spite of --omit=dev (user-level include=dev), never stating scope dependencies (Gitea #27, run02)`, async function() {
+        npmMode = 'real'
+        let reg = await fakeNpmRegistry(8998, scopePackages)
+        let cacheRoot = path.join(fdt, 'cache-l')
+        let out = path.join(fdt, 'out-l')
+        let prj = path.join(fdt, 'prj-scope-rc', 'package.json')
+        let userrc = path.join(fdt, 'user-include-dev.npmrc')
+        fs.mkdirSync(path.dirname(prj), { recursive: true })
+        fs.writeFileSync(prj, JSON.stringify(scopeProject))
+        fs.writeFileSync(userrc, 'include[]=dev\n')
+        let err
+        try {
+            err = await withEnv({
+                W_BIN_CACHE: cacheRoot,
+                W_BIN_MIRROR: mirror,
+                W_BIN_OFFLINE: '1',
+                npm_config_registry: reg.url,
+                npm_config_cache: path.join(fdt, 'npm-cache-l'),
+                npm_config_update_notifier: 'false',
+                npm_config_userconfig: userrc,
+            }, () => WScanDep(prj, out).then(() => null, (e) => e))
+        }
+        finally {
+            await reg.close()
+        }
+        assert.strict.ok(err instanceof Error, 'WScanDep 應 reject')
+        assert.strict.match(err.message, /掃描範圍 dependencies 不成立/)
+        assert.strict.ok(err.message.includes('dev-tool'), err.message)
+        assert.strict.deepStrictEqual(calls.map((v) => v.kind), ['npm']) //未進入掃描
+        for (let f of ['result.json', 'result.md', '待更新套件.md']) {
+            assert.strict.equal(fs.existsSync(path.join(out, f)), false, `${f} 不應被寫出`)
+        }
     })
 
 })

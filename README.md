@@ -33,7 +33,7 @@ async function test() {
     // => 'ok'
 
     // 產出於fdOut:
-    //   result.json 檢測數據(含各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
+    //   result.json 檢測數據(含掃描範圍scope、各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
     //   result.md 掃描報告
     //   待更新套件.md 連鎖更新清單
     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖(截圖失敗時無)
@@ -48,6 +48,8 @@ test()
         console.log(err)
     })
 ```
+
+> 掃描範圍：**只掃 `dependencies`**。本套件掃描之對象是網頁前後端服務或編譯出之應用程式(app)，只有 `dependencies` 所提供者(程式碼，以及這些套件所附之執行檔，如 `sharp` 之 libvips dll、`ssh2` 之 `util/pagent.exe`)會被服務或 app 實際使用，才算數；`devDependencies` 之開發與建置工具(如 vite 帶入之 `esbuild.exe`)不是系統前後端服務，也不會包入 app 執行，不構成服務之威脅，納入只會混入不相干之標註，故不在範圍(其風險應由執行機自行掃描或以防毒軟體處理)。作法：隔離安裝(`fdOut/test`)只裝正式相依樹(`npm install --omit=dev`)，syft 之各編目器(含不分正式或開發之 PE／Go binary 編目器)因而一致；同時為正式套件之相依者照收(例如 `vue` 為正式套件 `vue-router` 之對等相依，即使 `package.json` 亦列於 `devDependencies`，仍會被安裝與掃描)。`待更新套件.md` 與 `result.json` 之 `updateList` 取自同一份只含正式相依樹之安裝，引入路徑亦只含正式相依樹。`result.json` 之頂層欄位 `scope` 為 `'dependencies'`，`result.md` 之〈掃描資訊〉與 `待更新套件.md` 亦寫明範圍，供呼叫端之報告引用。此範圍不受呼叫端 npm 設定影響，裝入 dev 套件即拋錯：隔離安裝之子行程環境會移除使 npm 裝入 dev 套件之 `npm_config_include`、`npm_config_production`、`npm_config_dev`、`npm_config_also`(只動子行程之環境副本，不改呼叫端之 `process.env`)，安裝後再驗證隔離資料夾內無 dev 套件，有即拋錯而不輸出 `scope: 'dependencies'`。不提供掃描開發工具之開關。
 
 > ex-sbom 截圖失敗：ex-sbom 之任何失敗(啟動失敗、截圖期間意外結束、分析 SBOM 失敗等)只作廢截圖，`WScanDep` 仍回傳 `'ok'` 並寫出 syft、grype、osv-scanner 之結果；`result.json` 之 `exsbom.ok` 為 `false`、`exsbom.error` 為原因(截圖期間意外結束時附 `ex-sbom.log` 中 `fatal error`／`panic` 及其後數行，總長至多約 1500 字)，`fdOut/pics` 刪除，`result.md` 註明「ex-sbom 截圖失敗」並附原因與摘錄，`待更新套件.md` 註明未納入 ex-sbom 之判定。是否採用無截圖之結果由呼叫端決定。
 
@@ -93,6 +95,14 @@ test()
 - 更新工具版本(維護者，需連網)：`node toolg/genBinManifest.mjs`(`--dry-run` 只列差異、`--only syft,grype`、`--tag syft=v1.55.0`)，查各廠商最新版、下載資產與 checksums 並核對後寫入 `bin/manifest.json`，推 GitHub 主幹即生效。
 
 ## Breaking changes
+
+### 掃描範圍限定 dependencies(Gitea #27)
+
+- **隔離安裝改為 `npm install --omit=dev`**(其餘旗標 `--no-audit --no-fund` 與 `W_NPM_INSTALL_TIMEOUT` 時限不變)：`fdOut/test` 只裝正式相依樹(含正式套件之對等相依，以及同時為正式套件之相依者)，`devDependencies` 及其所附之執行檔不落地、不入 SBOM。原本 syft 之 npm 編目器預設不收 dev 套件，但 PE／Go binary 編目器掃描安裝所得之檔案，不分正式或開發用，故開發用套件所附之執行檔(如 vite 帶入之 `@esbuild/win32-x64/esbuild.exe` 及其 Go 標準庫)仍被掃入，範圍不一致；現已一致。
+- **呼叫端影響**：①**漏洞標註數可能下降**(開發工具之執行檔不再列入；實測一個含 vite、clipboardy 為 `devDependencies` 之專案，grype 由 62 筆〔Go 標準庫 59 筆＋sharp 3 筆〕降為 3 筆，osv-scanner 由 2 個套件降為 1 個；SBOM 之 npm 套件清單〔`javascript-lock-cataloger` 收錄者〕57 項不變，`vue` 因同為 `vue-router` 之對等相依而仍在)；②**`updateList` 只剩正式相依樹**(`result.json` 之 `updateList` 與 `待更新套件.md`)：風險套件之引入路徑取自 `fdOut/test` 之 `npm ls`，該處已無開發用套件，故開發工具不再出現在引入路徑中；③`fdOut/test/node_modules` 不再含開發用套件(安裝較快、佔用較少)；④報告產線若自行依「執行檔所在之 npm 套件是否在 SBOM 之 npm 套件清單」排除開發用執行檔(呼叫端補洞)，可移除該補洞。
+- **`result.json` 新增頂層欄位 `scope`**(值 `'dependencies'`，置於 `outputDir` 之後；頂層鍵依序為 `date`、`source`、`outputDir`、`scope`、`tools`、`osv`、`grype`、`exsbom`、`updateList`)；`result.md` 之〈掃描資訊〉與 `待更新套件.md` 之標頭新增「掃描範圍」一行。
+- **範圍不受呼叫端 npm 設定影響，裝入 dev 套件即拋錯**：npm 以 `include` 優先於 `omit`，呼叫端環境若有 `npm_config_include=dev`(或 `npm_config_production=false`、`npm_config_dev=true`、`npm_config_also=dev`)，單靠 `--omit=dev` 會被抵消(npm 12.1.0 實測)。故隔離安裝的子行程環境移除這四項(前綴不分大小寫；只動子行程副本)；呼叫端專案自身的 `.npmrc` 不會被讀到(npm 專案設定檔只取安裝目錄 `fdOut/test` 處，不往上層找)；使用者層(`~/.npmrc`)、全域層或 `fdOut/test/.npmrc` 若設 `include[]=dev` 等同類設定，環境變數無從移除，改由安裝後驗證攔下：依 `node_modules/.package-lock.json` 與 `package-lock.json` 之 `dev` 標記確認無 dev 套件落地，有即拋錯(訊息寫明套件名、原因與排除方式〔`npm config list` 查出並移除該設定〕)，不輸出任何 `result.*`。
+- 不提供「掃描開發工具」之開關(使用者明示不需要；需要時另議)。`fdOut/test` 之 `package-lock.json` 仍含開發用套件之解析結果(npm 寫出完整相依樹，其中開發用者標 `"dev": true`，syft 預設不收)，但 `node_modules` 不含。
 
 ### ex-sbom 截圖失敗之辨識、npm install 與掃描工具時限
 

@@ -1,7 +1,7 @@
 // 報告產製:結合範本結構 + 真實掃描資料 + ex-sbom 截圖 + 已知套件說明。
 // 產出之 md 內圖片路徑相對於報告檔(位於 ROOT),截圖置於 ROOT/shots。
 import { basename } from 'node:path'
-import { PACKAGE_NOTES, GUIDE_URL, TOOLS } from './config.mjs'
+import { PACKAGE_NOTES, GUIDE_URL, TOOLS, SCAN_SCOPE_NOTE } from './config.mjs'
 
 const REPO_OF = Object.fromEntries(TOOLS.map((t) => [t.key, t.repo]))
 
@@ -37,6 +37,7 @@ export function buildReport({ target, toolVersions, scan, exsbom, date, picsPref
     L.push('')
     L.push(`- 掃描日期：${date}`)
     L.push(`- 掃描目標：\`${target}\``)
+    L.push(`- 掃描範圍：${SCAN_SCOPE_NOTE}。`)
     L.push('')
     L.push('本次掃描所使用之各工具版本（取自執行當下之主幹清單 bin/manifest.json 所載之廠商發布版本，下載後已校驗 SHA-256 與大小，供業主查核）：')
     L.push('')

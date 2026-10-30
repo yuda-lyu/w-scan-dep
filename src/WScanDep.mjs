@@ -14,9 +14,13 @@
 //  npm install 加時限(環境變數 W_NPM_INSTALL_TIMEOUT,秒,預設 1200),逾時即結束安裝子行程樹並拋錯)
 // (2026-10-30 修正,同上之同類: syft、grype、osv-scanner 亦加單次時限(環境變數 W_SYFT_TIMEOUT 預設 3600 秒、W_GRYPE_TIMEOUT 預設 1800 秒、
 //  W_OSV_SCANNER_TIMEOUT 預設 600 秒),逾時即結束該工具之子行程樹並拋含「逾時」與工具名之錯誤;三個工具改為非同步執行,見 proc.mjs)
+// (2026-10-30 修正,見 建議w-scan-dep調整.md(Gitea #27): 掃描範圍只算 dependencies——隔離安裝改 npm install --omit=dev,
+//  devDependencies 及其所附之執行檔不落地、不入 SBOM;待更新清單(updateList)隨之只剩正式相依樹;result.json 加 scope、result.md 寫明範圍)
+// (2026-10-30 run02,同上之同類: 範圍不受呼叫端 npm 設定影響——隔離安裝之子行程環境移除會抵消 --omit=dev 之 npm_config_include／production／dev／also,
+//  安裝後驗證隔離資料夾內無 dev 套件,有即拋錯〔fail-closed,不輸出 scope: 'dependencies'〕,見 install.mjs)
 // 流程:
 //   0) 經 ensureBins 取得 syft/grype/osv-scanner/ex-sbom(清單為 bin/manifest.json,校驗 SHA-256 與大小;取不到時即中止,不待 npm install 後才發現)
-//   1) 清除 fdOut/test 上次安裝殘留,複製 package.json 並 npm install(產出 package-lock.json 與 node_modules;逾時即中止)
+//   1) 清除 fdOut/test 上次安裝殘留,複製 package.json 並 npm install --omit=dev(只裝正式相依樹;產出 package-lock.json 與 node_modules;逾時即中止;裝後驗證無 dev 套件,有即中止)
 //   2) 以上述工具掃描 fdOut/test
 //   3) ex-sbom 各漏洞套件截圖存 fdOut/pics/*.png(失敗時只作廢截圖、刪除 pics,續寫其餘產出)
 //   4) 檢測數據(含截圖相對路徑 ./pics、截圖成敗與原因、結果文字)寫入 fdOut/result.json
@@ -33,6 +37,7 @@ import { runScan, scanTimeoutsMs, SCAN_TIMEOUTS } from './scan.mjs'
 import { captureExSbom } from './exsbom.mjs'
 import { buildReport } from './report.mjs'
 import { computeUpdateList, buildUpdateListMd } from './updatelist.mjs'
+import { SCAN_SCOPE } from './config.mjs'
 
 const exists = async (p) => {
     try {
@@ -78,6 +83,8 @@ function serializeUpdateList(ul) {
  *
  * 經ensureBins取得syft、grype、osv-scanner、ex-sbom(依bin/manifest.json校驗SHA-256與大小，首次使用時下載並存於快取)，掃描指定專案之依賴套件，並將檢測數據、markdown報告、連鎖更新清單與ex-sbom各漏洞套件截圖輸出至指定資料夾，僅支援Windows
  *
+ * 掃描範圍只算dependencies：掃描對象為網頁前後端服務或編譯出之應用程式(app)，只有dependencies所提供者(程式碼，以及這些套件所附之執行檔)會被服務或app實際使用，才算數；devDependencies之開發與建置工具不是服務，也不會包入app執行，不在範圍(其風險應由執行機自行掃描或以防毒軟體處理)。作法為隔離安裝(fdOut/test)只裝正式相依樹(npm install --omit=dev)：devDependencies及其所附之執行檔(如vite帶入之esbuild.exe)不落地、不入SBOM，syft、grype、osv-scanner、ex-sbom與待更新套件清單(updateList)皆只及正式相依樹；同時為正式套件之相依者(如vue為正式套件之對等相依，即使package.json亦列於devDependencies)照收。不提供掃描開發工具之開關。result.json之scope為'dependencies'，result.md亦寫明範圍。此範圍不受呼叫端npm設定影響(隔離安裝之子行程環境移除會使npm裝入dev套件之npm_config_include、npm_config_production、npm_config_dev、npm_config_also，不改呼叫端之process.env)，安裝後若隔離資料夾內仍有dev套件(如使用者層或全域.npmrc設了include=dev)即reject，不輸出result.*。
+ *
  * 外部執行檔不含於npm包，快取預設為套件根之bin-cache/，可由環境變數W_BIN_CACHE改位置(多個專案共用同一份)；W_BIN_MIRROR指定離線鏡像，W_BIN_OFFLINE=1時不連網；部署前可預先呼叫WScanDep.ensureBins()，見README〈外部執行檔〉。
  * ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行
  *
@@ -89,7 +96,7 @@ function serializeUpdateList(ul) {
  *
  * @class
  * @param {String} fpIn 輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串
- * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此
+ * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝正式相依樹〔不含devDependencies〕之掃描目標)、result.json(含範圍欄位scope)、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此
  * @returns {Promise} 回傳Promise，resolve回傳'ok'(截圖失敗時亦同，以result.json之exsbom.ok辨識)，reject回傳錯誤訊息
  * @example
  *
@@ -105,7 +112,7 @@ function serializeUpdateList(ul) {
  *     // => 'ok'
  *
  *     // 產出於fdOut:
- *     //   result.json 檢測數據(含各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
+ *     //   result.json 檢測數據(含掃描範圍scope、各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
  *     //   result.md 掃描報告
  *     //   待更新套件.md 連鎖更新清單
  *     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖(截圖失敗時無)
@@ -147,6 +154,7 @@ async function WScanDep(fpIn, fdOut, opt) {
     log(`  package.json：${pkgJson}`)
     log(`  輸出資料夾：${outDir}`)
     log(`  掃描目標：${testDir}(複製 package.json 全新安裝)`)
+    log(`  掃描範圍：${SCAN_SCOPE}(只裝正式相依樹,不含 devDependencies)`)
     log('════════════════════════════════════════════')
 
     // 0) 經 ensureBins 取得掃描工具(依 bin/manifest.json 校驗;取不到即中止,不待 npm install 數分鐘後才發現)
@@ -169,7 +177,7 @@ async function WScanDep(fpIn, fdOut, opt) {
     log(`[npm] 清除 test 上次安裝殘留(${NPM_STATE.join('、')})...`)
     await clearNpmState(testDir)
     await copyFile(pkgJson, join(testDir, 'package.json'))
-    log(`[npm] 於 test 全新安裝相依(npm install,時限 ${installTimeoutMs / 1000} 秒,環境變數 W_NPM_INSTALL_TIMEOUT 可調)...`)
+    log(`[npm] 於 test 全新安裝正式相依樹(npm install --omit=dev,時限 ${installTimeoutMs / 1000} 秒,環境變數 W_NPM_INSTALL_TIMEOUT 可調)...`)
     await npmInstall(testDir, { timeoutMs: installTimeoutMs })
     const scanTarget = testDir
 
@@ -202,6 +210,7 @@ async function WScanDep(fpIn, fdOut, opt) {
         date,
         source: pkgJson,
         outputDir: outDir,
+        scope: SCAN_SCOPE,
         tools: Object.fromEntries(Object.entries(tools).map(([k, v]) => [k, v.version])),
         osv: { summary: (scan.osv.mdText || '').split('\n').slice(0, 2).join(' ').trim(), markdown: scan.osv.mdText, packages: scan.osv.packages },
         grype: { matches: scan.grype.matches },

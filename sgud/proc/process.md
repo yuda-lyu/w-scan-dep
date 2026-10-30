@@ -35,7 +35,7 @@ test().catch((err) => { console.log(err) })
 
 | 產物 | 重跑時 |
 | --- | --- |
-| `fdOut/test` 之 `package-lock.json`、`node_modules` | 安裝前自動刪除並回驗（`src/install.mjs`）；刪不掉（被占用）即 throw 中止。`test/` 內其他檔不刪。`npm install` 有時限（預設 20 分鐘，環境變數 `W_NPM_INSTALL_TIMEOUT` 秒；2026-10-29 起），逾時即結束整個安裝子行程樹並 throw。syft／grype／osv-scanner 亦各有單次時限（2026-10-30 起；`W_SYFT_TIMEOUT` 預設 3600 秒、`W_GRYPE_TIMEOUT` 預設 1800 秒〔首次須下載漏洞資料庫〕、`W_OSV_SCANNER_TIMEOUT` 預設 600 秒），逾時即結束該工具之子行程樹並 throw（不寫出 `result.*`） |
+| `fdOut/test` 之 `package-lock.json`、`node_modules` | 安裝前自動刪除並回驗（`src/install.mjs`）；刪不掉（被占用）即 throw 中止。`test/` 內其他檔不刪。安裝只裝正式相依樹（`npm install --omit=dev`，2026-10-30 起，掃描範圍只算 `dependencies`，見 R-SCAN-SCOPE-01）；此範圍不受呼叫端 npm 設定影響：安裝子行程之環境副本會移除 `npm_config_include`／`production`／`dev`／`also`，安裝後再驗證無 dev 套件，**有即 throw（訊息寫明套件與排除方式；多為使用者層／全域 `.npmrc` 設了 `include[]=dev`，以 `npm config list` 查出並移除後重跑），不輸出任何 `result.*`**。`npm install` 有時限（預設 20 分鐘，環境變數 `W_NPM_INSTALL_TIMEOUT` 秒；2026-10-29 起），逾時即結束整個安裝子行程樹並 throw。syft／grype／osv-scanner 亦各有單次時限（2026-10-30 起；`W_SYFT_TIMEOUT` 預設 3600 秒、`W_GRYPE_TIMEOUT` 預設 1800 秒〔首次須下載漏洞資料庫〕、`W_OSV_SCANNER_TIMEOUT` 預設 600 秒），逾時即結束該工具之子行程樹並 throw（不寫出 `result.*`） |
 | `fdOut/scan` 之 osv 產物 | 執行前自動刪除；osv-scanner 離開碼非 0/1/128 即 throw（`src/scan.mjs` `runOsv`） |
 | `fdOut/scan` 之 syft/grype 產物 | 成功即覆寫，失敗即 throw |
 | `fdOut/pics` | ex-sbom 就緒後才整夾刪除重建（`src/exsbom.mjs` `captureExSbom`）；2026-10-29 起 ex-sbom 任何失敗時 `WScanDep` 刪除整夾（上次或本次殘缺之截圖不與本次 `result.*` 並存），`result.json` 之 `exsbom.ok=false` |
@@ -51,18 +51,19 @@ test().catch((err) => { console.log(err) })
 
 | 路徑 | 內容 |
 | --- | --- |
-| `result.json` | 檢測數據（工具版本標籤、osv/grype 結果、截圖相對路徑、截圖成敗 `exsbom.ok`/`exsbom.error`、上傳 ex-sbom 前剔除之循環關係 `exsbom.removedRelationships`、連鎖更新清單） |
+| `result.json` | 檢測數據（掃描範圍 `scope`〔2026-10-30 起，值 `'dependencies'`〕、工具版本標籤、osv/grype 結果、截圖相對路徑、截圖成敗 `exsbom.ok`/`exsbom.error`、上傳 ex-sbom 前剔除之循環關係 `exsbom.removedRelationships`、連鎖更新清單） |
 | `result.md` | 掃描報告，圖以 `./pics/` 相對路徑引用 |
 | `待更新套件.md` | 連鎖更新清單，依底層自有套件分組 |
 | `pics/*.png` | ex-sbom 拓撲總覽 + 各漏洞套件彈窗截圖 |
 | `scan/` | syft SBOM（spdx/cdx）、grype.json、osv.json 與兩份文字報告 |
-| `test/` | 複製 package.json 全新安裝之掃描目標 |
+| `test/` | 複製 package.json 全新安裝正式相依樹（不含 devDependencies）之掃描目標 |
 | `exsbom-work/` | 正常結束時不存在；若殘留（刪除失敗會警告）為暫存，交付前刪除 |
 
 2026-10-29 起不再產出 `tools/`（掃描工具在 `ensureBins` 快取，不隨 `fdOut` 交付；要提供工具給業主請另交付 `W_BIN_CACHE` 資料夾）。`result.md` 與 `pics/` 為相對路徑對應，整個 `fdOut` 可直接搬移交付。
 
 ## 8. 結果判讀
 
+- **掃描範圍只算 `dependencies`**（2026-10-30 起，使用者裁定，Gitea #27）：掃描對象為網頁前後端服務或編譯出之 app，只有 `dependencies` 所提供者（程式碼與其所附之執行檔）會被實際使用；`devDependencies` 之開發與建置工具及其所附之執行檔（如 vite 帶入之 `esbuild.exe`）不在範圍，風險由執行機自行掃描或防毒處理。故漏洞標註與待更新清單皆只及正式相依樹；`result.json` 之 `scope` 為 `'dependencies'`，`result.md`、`待更新套件.md` 亦寫明。不提供掃描開發工具之開關（使用者明示不需要）。
 - 三項工具資料庫不同，結果本就不一致；報告已做去重彙整。
 - **截圖是否可用**（2026-10-29 起）：先看 `result.json` 之 `exsbom.ok`；`false` 時無截圖，原因在 `exsbom.error`（截圖期間意外結束時含 `ex-sbom.log` 之 `fatal error`/`panic` 摘錄），報告之綜合句只含 osv-scanner 與 grype。`exsbom.removedRelationships` 非空表示 SBOM 含相依循環、拓撲截圖之層級係剔除該些關係後之結果（ex-sbom v0.2.0 之限制，見規則帳本 R-EXSBOM-CYCLE-01）。
 - `xlsx`、`vue` 於 `src/config.mjs` 之 `PACKAGE_NOTES` 有人工說明（xlsx 屬 osv-scanner 誤報、vue2 屬框架升級議題），命中時自動附入報告，且不列入連鎖更新清單。

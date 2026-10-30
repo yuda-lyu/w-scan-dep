@@ -2,7 +2,7 @@
 
 本檔記載當前已開發功能之最新狀態:各功能做到哪裡、對應之規則帳本條目與測試檔、已知缺口與待辦、最近一次驗證或發布之版本.只記現況,不寫過程(過程見 `sgud/exp/experience.md`).規則帳本為藍圖(`sgud/rule/rulebook.md`),兩者比對即知尚未做到者.
 
-套件:`w-scan-dep` 1.0.9(`package.json` version 未動;run01、run02、run03(Gitea #24 及其 TCP 表異常之繞過)之修正待主控複審並發布).相依 `wsemi` ^1.9.32(`package.json`,run03 升級).
+套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.10;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正待主控複審並發布).相依 `wsemi` ^1.9.32(`package.json`,run03 升級).
 
 ## 功能現況
 
@@ -20,6 +20,7 @@
 | 上傳 ex-sbom 前剔除相依循環(`exsbom.removedRelationships`) | 完成(同上) | R-EXSBOM-CYCLE-01 | `test/unit-exsbom.test.mjs`〈breakDependencyCycles〉、`test/WScanDep.test.mjs`(含循環之 fixture 產出截圖)、`test/fixtures/cycle.spdx.json` |
 | npm install 時限(`W_NPM_INSTALL_TIMEOUT`,預設 1200 秒,逾時樹狀結束) | 完成(同上) | R-NPM-TIMEOUT-01 | `test/api-npmInstall.test.mjs`、`test/unit-npmInstallTimeout.test.mjs`、`test/api-wsdEntry.test.mjs` |
 | syft／grype／osv-scanner 單次時限(`W_SYFT_TIMEOUT` 3600 秒、`W_GRYPE_TIMEOUT` 1800 秒、`W_OSV_SCANNER_TIMEOUT` 600 秒,逾時樹狀結束;三工具改非同步,共用 `src/proc.mjs`) | 完成(2026-10-30 run02,Gitea #24 同類) | R-SCAN-TIMEOUT-01 | `test/api-scanTimeout.test.mjs`、`test/unit-scanTimeout.test.mjs`、`test/unit-proc.test.mjs`、`test/api-wsdEntry.test.mjs`、替身 `test/tools/hangTool.mjs` |
+| 掃描範圍只算 dependencies(隔離安裝 `npm install --omit=dev`;`result.json` 之 `scope: 'dependencies'`;`result.md`、`待更新套件.md` 寫明範圍;`updateList` 只剩正式相依樹;README〈掃描範圍〉與〈Breaking changes〉、`WScanDep` 之 JSDoc) | 完成(2026-10-30,Gitea #27,使用者裁定;不提供掃描開發工具之開關;run02 起範圍不受呼叫端 npm 設定影響:子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯) | R-SCAN-SCOPE-01 | `test/api-installScope.test.mjs`、`test/api-installScopeEnv.test.mjs`、`test/unit-installGuard.test.mjs`、`test/api-scanScope.test.mjs`(連網＋真 syft)、`test/api-wsdEntry.test.mjs`(指令、`scope`、整合案)、`test/unit-report.test.mjs`、`test/WScanDep.test.mjs`「test」、替身 `test/tools/fakeNpmRegistry.mjs`、`test/tools/scopeFixture.mjs` |
 | 重跑清除上次安裝殘留 | 完成(未動) | — | `test/unit-clearNpmState.test.mjs` |
 | osv-scanner 執行與離開碼 | 完成(2026-10-30 改經 `runTool` 非同步執行,離開碼判讀不變) | R-SCAN-TIMEOUT-01 規則 5 | `test/unit-runOsv.test.mjs` |
 
@@ -36,9 +37,14 @@
 - **作業系統 TCP 表異常已繞過**(2026-10-30 run03):Windows 11 26300(KB5127936)之系統 TCP 狀態值錯誤,`netstat -ano` 整列漏列新起之監聽、對外連線反列 LISTENING;run01、run02 之全套因此 8 案未綠.身分確認已改 wsemi `execProcessPortPidsSync(port, { useBoth: true })`(R-EXSBOM-PORT-01),run03 全套綠.**選埠之全表快照 `listeningPorts()` 仍為 netstat**(wsemi 無全表查詢),漏列只會多選到被占用之埠而換埠重試.
 - 身分確認為同步呼叫、本 OS 上每次約 1 秒(阻塞事件迴圈),每次擷取約 3 次;wsemi 預設每個子指令逾時 10 秒,機器極忙致 PowerShell 逾時時查詢失敗 → 拋錯 → 只作廢截圖(fail-closed,未放寬時限).
 - 已知缺口(R-EXSBOM-PORT-01):`finally` 之釋放確認 log 訊息無測試;回傳前重驗之「查詢失敗」分支無直接測試.
+- 已知缺口(R-SCAN-SCOPE-01):①`api-scanScope.test.mjs` 需連 npm registry(取 `npm_config_registry` 所指者)與真 syft,離線無法跑(其餘新案離線);②(run02 已處理,規則 7)呼叫端 npm 設定抵消 `--omit=dev`:環境變數 `include=dev`／`production=false`／`dev=true`／`also=dev` 由子行程環境副本移除,設定檔層(使用者層、全域層、安裝目錄內)由安裝後驗證拋錯;未實測之局限:`install-strategy=linked` 等改變 `node_modules` 版面之設定、`optionalDependencies`／根專案 `peerDependencies`／workspaces 無夾具;③cgsmdb 專案(`E:` 槽)本機不存在,真實驗收以同形態替身 `package.json` 進行,提出端之三個專案需其於新版發布後自行重掃確認(建議檔〈驗證建議〉1~3).
 - 「清除前次殘留之工作子夾」案之時序假設已修(2026-10-30 run02):占用者改由 `test/tools/holdDir.mjs` 等確被持有才往下;清除邏輯另有不經 ex-sbom 之確定性單元測試(`cleanStaleWork` 已匯出).
 
 ## 最近一次驗證
+
+2026-10-30(任務 20261030151214 run02,Gitea #27 之 §9 待裁示:範圍不受呼叫端 npm 設定影響):**全套 `npm test`(`--lock`)178 通過/0 失敗**(約 1 分 44 秒;run01 之 154 + 新增 24 案:`unit-installGuard` 11、`api-installScopeEnv` 11、`api-wsdEntry` 2);修前紅(= run01 之碼,子行程不傳環境副本且無安裝後驗證)12 案紅;變異 M0~M14 共 15 個皆被抓到;npm 設定探測 22 案(`npm_config_include`／`production`／`dev`／`also` 及使用者層、全域層、安裝目錄內設定檔會抵消 `--omit=dev`,呼叫端專案 `.npmrc` 不會被讀到);eslint 變更行 0 error(`install.mjs:137` 為既有舊問題).報告:`C:\opensrcOper\dnow\20261030151214\agent-out\run02-修正報告.md`.
+
+2026-10-30(任務 20261030151214 run01,Gitea #27 掃描範圍限定 dependencies):**全套 `npm test`(`--lock`)154 通過/0 失敗**(兩次,約 1 分 40 秒;原 144 + 新增 10 案);修前紅(暫將 `NPM_INSTALL_ARGS` 改回修前值)6 案紅〔`api-installScope` 3、`api-scanScope` 1、`api-wsdEntry` 2〕;變異 M1、M2、M4~M8 皆被抓到(M2 於初版夾具存活,補 `peer-only` 後被抓);真實驗收(替身專案,真 syft/grype/osv-scanner,不含 ex-sbom):SBOM 65→60 元件、npm 套件清單 57 項不變、`esbuild.exe`／`clipboard_*.exe`／Go 標準庫不在、`libvips`／`term-size.exe`／`vue` 仍在、grype 62→3、osv-scanner 2 個套件→1 個;eslint 變更行 0 error(檔內既有 20 個舊問題未動).報告:`C:\opensrcOper\dnow\20261030151214\agent-out\run01-修正報告.md`.
 
 2026-10-30(run03,埠之監聽者之身分確認改 wsemi):**全套 `npm test`(`--lock`)144 通過/0 失敗**(兩次:修改後與最終碼;run01、run02 為 107/8 等);修前探測(真實 0.0.0.0 監聽之子程序 5 次)舊作法身分確認成功 2/5、wsemi `useBoth` 5/5;修前整合案(`WScanDep.test.mjs` 之 `captureExSbom` 組,修前工作樹之複本)4 次執行次次有失敗案(8/3、7/4、1/4〔含 hook 連帶〕、10/1),修後 3 次 11/0 全綠;新增與改動之 `unit-exsbom`、`api-exsbomPort` 42 通過;變異 M1~M11 皆被抓到(基準 42/0);eslint 0 error.報告:`C:\opensrcOper\dnow\20261029214736\agent-out\run03-修正報告.md`.
 

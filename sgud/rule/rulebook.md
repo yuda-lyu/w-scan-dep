@@ -13,6 +13,7 @@
 | R-NPM-TIMEOUT-01 | npm install 之時限與逾時之樹狀結束(Gitea #24 三) | 本檔 |
 | R-SCAN-TIMEOUT-01 | syft、grype、osv-scanner 之單次時限與逾時之樹狀結束(Gitea #24 三之同類;主控裁定 2026-10-30 run02) | 本檔 |
 | R-EXSBOM-PORT-01 | ex-sbom 服務埠之監聽者之身分確認改用 wsemi `execProcessPortPidsSync`(useBoth),不自行解析 netstat;選埠全表快照之 netstat 解析不看狀態欄(2026-10-30 run03,wsemi 1.9.32 報告 §6 第 3 列) | 本檔 |
+| R-SCAN-SCOPE-01 | 掃描範圍只算 dependencies:隔離安裝 `npm install --omit=dev`、`result.json` 之 `scope`、`result.md`／`待更新套件.md` 之範圍說明、`updateList` 只剩正式相依樹、範圍不受呼叫端 npm 設定影響〔子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯〕(Gitea #27,使用者裁定,2026-10-30 run01、run02) | 本檔 |
 
 ## R-BIN-ENSURE-01 外部執行檔之存放、下載、校驗與離線
 
@@ -200,7 +201,7 @@
 
 ### 規則
 
-1. `npm install` 只經 `src/install.mjs` 之 `npmInstall`(非同步 `spawn`,`shell:true`,`windowsHide`);逾時以 `taskkill /F /T /PID <cmd.exe>` 結束**整個子行程樹**(只結束 cmd.exe 時 npm 之 node 續跑),回驗子行程已結束後拋 `npm install 逾時(超過 … 未完成),已結束安裝子行程樹;可設環境變數 W_NPM_INSTALL_TIMEOUT(秒)調整時限`.等待、樹狀結束、環境變數解析之共用實作在 `src/proc.mjs`(`waitChild`、`killTree`、`timeoutMsFromEnv`;2026-10-30 自 install.mjs 抽出,與 R-SCAN-TIMEOUT-01 共用).
+1. `npm install`(指令為 `npm install --omit=dev --no-audit --no-fund`,2026-10-30 起只裝正式相依樹,見 R-SCAN-SCOPE-01)只經 `src/install.mjs` 之 `npmInstall`(非同步 `spawn`,`shell:true`,`windowsHide`);逾時以 `taskkill /F /T /PID <cmd.exe>` 結束**整個子行程樹**(只結束 cmd.exe 時 npm 之 node 續跑),回驗子行程已結束後拋 `npm install 逾時(超過 … 未完成),已結束安裝子行程樹;可設環境變數 W_NPM_INSTALL_TIMEOUT(秒)調整時限`.等待、樹狀結束、環境變數解析之共用實作在 `src/proc.mjs`(`waitChild`、`killTree`、`timeoutMsFromEnv`;2026-10-30 自 install.mjs 抽出,與 R-SCAN-TIMEOUT-01 共用).
 2. 時限只由環境變數 `W_NPM_INSTALL_TIMEOUT`(秒,正數,至多 2147483——超過 2^31-1 毫秒時 `setTimeout` 會改為 1 毫秒)調整;`WScanDep` 不接受第三參數(R-BIN-ENSURE-01 規則 7).預設 1200 秒(實測 2000 套件約 4 分鐘,取約 5 倍).值不合法時於任何下載與寫入前拋錯(`src/WScanDep.mjs` 開頭之 `npmInstallTimeoutMs()`),不靜默改用預設.逾時後等子行程結束之計時器於結束時清除(不拖住呼叫端結束);taskkill 失敗時至少結束 cmd.exe,訊息寫「未確認成功」.
 3. 非 0 結束之訊息維持 `npm install 失敗(exit N)`.
 
@@ -258,3 +259,54 @@
 | 預設與環境變數解析 | `test/unit-scanTimeout.test.mjs`、`test/unit-proc.test.mjs`(`timeoutMsFromEnv`、`fmtMs`、`within`) | 預設 3600/1800/600 秒且 ≥ 實測最大值 5 倍;環境變數名;非正數、非十進位數字(`0x10`)、不足 1 毫秒(`1e-7`)、超過 2147483 秒拋錯 |
 | `runTool` 基本行為 | `test/unit-proc.test.mjs`〈runTool〉、〈waitChild, killNote〉 | 收集 stdout/stderr(多位元組字元逐位元組分段輸出仍完整)、非 0 離開碼不拋錯、傳入之 env、執行檔不存在、輸出超量、計時器於先解決時清除、時限邊界上自行結束(taskkill 128)不報逾時、`killNote` 措辭 |
 | WScanDep 之串接 | `test/api-wsdEntry.test.mjs`「should stop with a timeout error naming <工具> from <變數> …」(syft、grype、osv-scanner 三案)、「should reject a syft, grype or osv-scanner time limit that is not a positive number…」 | 攔截 `spawn`,卡住之工具改啟動 `hangTool.mjs`(埠 8989,時限 8 秒);逾時訊息、樹狀結束、後續工具未啟動、無 `result.json`;不合法值於取工具前拒絕;掃描工具之呼叫序列斷言為 `['npm','tool','tool','tool','tool','spawn']`(以 `spawnSync` 啟動者記為 `spawnSync`,序列不符即失敗) |
+
+## R-SCAN-SCOPE-01 掃描範圍只算 dependencies
+
+來源:Gitea #27(`建議w-scan-dep調整.md`,提出端 cgsmdb);使用者裁定(掃描對象為網頁前後端服務或編譯出之 app,只算 `dependencies` 所提供者〔程式碼與其所附之執行檔〕,`devDependencies` 之開發與建置工具不在範圍,其風險由執行機自行掃描或防毒處理);主控裁定 1~5(2026-10-30 run01):採建議 1 之甲案、建議 2、3 照辦、不加掃開發工具之開關、`updateList` 隨之只剩正式相依樹.
+
+背景(實測,2026-10-30):syft 之 `javascript-lock-cataloger` 預設不收 `package-lock.json` 中標 `"dev": true` 者,但 `pe-binary-package-cataloger`、`go-module-binary-cataloger` 掃描安裝所得之檔案,不分正式或開發用——全量安裝時開發用套件所附之執行檔(vite 帶入之 `@esbuild/win32-x64/esbuild.exe`→ Go 標準庫 59 筆;`clipboardy/fallbacks/windows/clipboard_*.exe`)仍被編入 SBOM,範圍不一致.
+
+### 規則
+
+1. **隔離安裝只裝正式相依樹**:`fdOut/test` 之安裝只經 `src/install.mjs` 之 `npmInstall`,指令為 `npm install --omit=dev --no-audit --no-fund`(常數 `NPM_INSTALL_ARGS`)——其餘旗標與 R-NPM-TIMEOUT-01 之時限不變.**不得移除 `--omit=dev`**;**不得加 `--omit=peer`／`--omit=optional`**(正式套件之對等相依與選用相依屬正式相依樹;fixture 之 `peer-only` 擋 `--omit=peer`);**不得改為全量安裝後依名稱刪除 `devDependencies` 所列者**(同時為正式套件之相依者會被誤刪,如 `vue` 為 `vue-router` 之對等相依、`term-size` 為 `boxen` 之相依而亦列於 `devDependencies`;且只列於開發樹之傳遞相依刪不掉).
+2. **同時為正式套件之相依者照收**(實測 npm 行為):`devDependencies` 與正式套件之 `peerDependencies`／`dependencies` 重疊者,`--omit=dev` 下仍安裝,且版本為 `devDependencies` 所釘者(與全量安裝相同,SBOM 內之 npm 套件版本不變).
+3. **不提供「掃描開發工具」之開關**(使用者明示不需要;專案原則 14,需要時另議):`WScanDep` 無第三參數(R-BIN-ENSURE-01 規則 7),無環境變數.
+4. **範圍欄位與說明**:`result.json` 頂層 `scope: 'dependencies'`(`src/config.mjs` 之 `SCAN_SCOPE`),鍵序為 `date, source, outputDir, scope, tools, osv, grype, exsbom, updateList`(頂層新增一鍵,屬破壞性變更,README〈Breaking changes〉已列);`result.md`〈掃描資訊〉與 `待更新套件.md` 標頭各一行「- 掃描範圍：」＋`SCAN_SCOPE_NOTE`(後者另加「本清單之引入路徑亦只含正式相依樹」);`WScanDep` 之 JSDoc 與 README〈掃描範圍〉說明範圍與理由.
+5. **`updateList` 只剩正式相依樹**(讀碼確認,未改 `src/updatelist.mjs` 之演算法):`computeUpdateList` 之風險葉套件取自 osv／grype 結果與 ex-sbom 截圖(皆源自 syft 對 `fdOut/test` 之 SBOM),引入路徑取自 `fdOut/test` 之 `npm ls <名> --json`(`src/updatelist.mjs` `npmLs`/`findPaths`)——僅及 `node_modules` 內已安裝者;缺少 `devDependencies` 時 `npm ls` 仍回有效 JSON(實測 `api-installScope` 的 `logs` 為空).故開發工具不再出現在引入路徑.
+6. **已知殘留(刻意)**:`fdOut/test/package-lock.json` 仍含開發用套件之解析結果(`"dev": true`;`npm install --omit=dev` 仍解析並寫出完整相依樹,只是不下載、不落地),syft 之 lock 編目器預設跳過;grype／osv-scanner 吃 SBOM(`-L`／`sbom:`)不讀 lock.
+7. **範圍不受呼叫端 npm 設定影響**(主控裁定,2026-10-30 run02;`scope: 'dependencies'` 是報告引用之依據,必須為真):npm 以 `include` 優先於 `omit`,下列設定會抵消 `--omit=dev`(npm 12.1.0 逐項實測,見報告 `run02-修正報告.md` §2):環境變數 `npm_config_include=dev`、`npm_config_production=false`、`npm_config_dev=true`、`npm_config_also=dev|development`(前綴與鍵名不分大小寫),以及使用者層(`~/.npmrc`)、全域層、安裝目錄內(`fdOut/test/.npmrc`)設定檔之 `include[]=dev`／`production=false`.處置:①**子行程環境移除上述四項**(`src/install.mjs` 之 `NPM_DEV_OVERRIDE_ENV`／`npmInstallEnv`,只動環境副本,不改 `process.env`;registry、快取、`userconfig`、`omit`、`only`、`optional`、`NODE_ENV`、鍵名僅前綴相同者〔`include_workspace_root`、`devdir`〕皆照傳,不過度移除);②**呼叫端專案之 `.npmrc` 不會被讀到**(npm 之專案設定檔取自安裝目錄 `fdOut/test`〔其 `package.json` 所在,不往上層找〕;實測上層專案之 `include[]=dev` 不生效,含 `fdOut` 位於專案內之形態);③設定檔層環境變數無從移除者,**安裝後驗證**(`assertDependenciesOnly`,`npmInstall` 成功後必呼叫):讀 `node_modules/.package-lock.json`(只列實際落地者)之 `dev: true` 項,與 `package-lock.json` 中 `dev: true` 且路徑實際存在於磁碟者;有即**拋錯**(訊息列套件〔至多 5 個〕、原因、排除方式〔`npm config list` 查出並移除該設定〕、不輸出 `scope: 'dependencies'`),`WScanDep` 因而 reject 且不寫出任何 `result.*`;`node_modules` 有套件卻兩份鎖定檔皆無、或鎖定檔非有效 JSON,亦拋錯(fail-closed);`devOptional`／`optional`／`peer` 標記不算 dev(正式樹所需者合法落地);無 `node_modules`(零相依)通過.**不採** CLI 再加 `--include=prod`:實測它擋得住 `include=dev`(環境與設定檔)卻擋不住 `production=false`,且未獲裁定改指令.
+
+### 盤點指令與站點全集
+
+| 盤點指令(可重跑) | 預期 | 判準 |
+| --- | --- | --- |
+| Grep `npm install` 於 `src/`(程式碼) | 只有 `src/install.mjs` 之 `NPM_INSTALL_ARGS` 與 `npmInstall`(及 `WScanDep.mjs` 之 log 文字) | 已套(含 `--omit=dev`) |
+| Grep `omit` 於 `src/` | 只有 `src/install.mjs`(`--omit=dev`) | 已套 |
+| Grep `npm_config_` 於 `src/`(程式碼) | 只有 `src/install.mjs` 之 `NPM_DEV_OVERRIDE_ENV`(四項:include、production、dev、also);`spawn(\`npm install` 處帶 `env: npmInstallEnv()` | 已套(規則 7);新增 npm 子行程時同樣須經 `npmInstallEnv`／驗證 |
+| Grep `assertDependenciesOnly` 於 `src/` | `install.mjs` 定義,且 `npmInstall` 成功路徑末呼叫一次 | 已套(規則 7;變異 M6 證明缺此呼叫即紅) |
+| Grep `devDependencies` 於 `src/`(程式碼,不含註解) | 無(沒有依 `devDependencies` 欄位自行過濾之邏輯) | 已套 |
+| Grep `SCAN_SCOPE` 於 `src/` | `config.mjs` 定義(`SCAN_SCOPE`、`SCAN_SCOPE_NOTE`);`WScanDep.mjs` 之 `result.scope` 與 log;`report.mjs`、`updatelist.mjs` 之說明句 | 已套(3 個產出各一處) |
+| 真實驗收(腳本副本 `C:\opensrcOper\dnow\20261030151214\agent-out\run01-evidence\real-accept.mjs`,放 repo 內 `./tmp/` 下執行;報告 `…\run01-修正報告.md`) | 修前:SBOM 65 元件含 esbuild.exe、clipboard_*.exe、Go 標準庫;修後:60 元件,npm 套件清單 57 項不變,libvips／term-size 在,`vue` 在,grype 62→3 | 已套 |
+
+### 對應測試
+
+| 項目 | 測試檔 | 說明 |
+| --- | --- | --- |
+| 安裝集合 | `test/api-installScope.test.mjs` | 真實 npm 對本機假 registry(`test/tools/fakeNpmRegistry.mjs`,埠 8997;夾具 `test/tools/scopeFixture.mjs`):`dev-tool`、`dev-only-sub` 不落地;`prod-mid`、`prod-ui`、`semver`、`peer-fw`(亦列於 devDependencies 之對等相依,版本為所釘之 1.0.0)、`peer-only`(未列於 devDependencies 之對等相依)照裝;`node_modules` 恰為正式相依樹 |
+| `updateList` 只含正式路徑 | 同上 | `computeUpdateList` 對該安裝:`semver@7.0.0` 同時被 `prod-mid` 與 `dev-tool` 引入,引入路徑只有 `prod-mid`;`npm ls` 無需 log 警告 |
+| 真實 syft 之 SBOM | `test/api-scanScope.test.mjs` | 連網(npm registry)＋真實 syft(`ensureBins`):`boxen@4.2.0`(→ `term-size@2.2.1`,亦列於 devDependencies)之 `term-size.exe` 仍在;`clipboardy@2.3.0`(devDependencies)之 `clipboard_*.exe`、套件與只在開發樹之 `arch` 不在;npm 套件清單為正式相依樹(此案修前亦綠,為「不誤傷」守門) |
+| `WScanDep` 層 | `test/api-wsdEntry.test.mjs` | 呼叫序列首項 `npm install --omit=dev --no-audit --no-fund`(cwd 為 `fdOut/test`);`result.json` 鍵序含 `scope` 且為 `'dependencies'`(含 ex-sbom 失敗案);`result.md` 範圍說明;整合案(真實 npm＋假 registry＋假掃描工具,埠 8998):dev 套件不落地、`updateList` 只有 `prod-mid->semver@7.0.0`、`待更新套件.md` 無 `dev-tool` |
+| 範圍不受呼叫端 npm 設定影響(規則 7) | `test/api-installScopeEnv.test.mjs`(埠 8999,真實 npm＋假 registry,離線) | 6 案:呼叫端環境 `npm_config_include=dev`、`NPM_CONFIG_INCLUDE=dev`、`production=false`、`dev=true`、`also=dev`、`also=development` 下 dev 套件不落地、`node_modules` 恰為正式相依樹、`process.env` 不變;1 案:上層專案 `.npmrc`(`include[]=dev`)不被讀到;4 案:使用者層 `include[]=dev`、使用者層 `production=false`、全域 `include[]=dev`、安裝目錄內 `.npmrc` 時 dev 套件落地(前提)→ `npmInstall` 拋錯,訊息含套件名、「掃描範圍 dependencies 不成立」、`npm config list`、隔離資料夾路徑 |
+| 子行程環境副本與安裝後驗證(單元) | `test/unit-installGuard.test.mjs` | `npmInstallEnv`:四項任意大小寫皆移除、其餘(registry、cache、userconfig、omit、only、optional、`include_workspace_root`、`devdir`、`NODE_ENV`、`PATH`)照傳、不改傳入物件與 `process.env`;`assertDependenciesOnly`:隱藏鎖定檔 `dev:true` 拋錯、`package-lock.json` 之 `dev:true` 且落地拋錯(巢狀路徑報末段名)、省略成功狀態〔鎖定檔含 dev 項但未落地〕通過、`devOptional`／`optional`／`peer` 不誤報、零相依通過、有套件無鎖定檔拋錯、鎖定檔損毀拋錯、超過 5 個截斷 |
+| `WScanDep` 入口層(規則 7) | `test/api-wsdEntry.test.mjs`「…npm_config_include=dev and npm_config_production=false…」「…should reject without writing any result when a dev package is installed…」 | 入口完成且 dev 不落地、交給 `spawn` 之 env 副本無四項而 `process.env` 仍有、其餘設定(registry)照傳、`result.json` 之 `scope` 為真;使用者層 `include[]=dev` 時入口 reject、呼叫序列僅 `['npm']`、`result.json`／`result.md`／`待更新套件.md` 皆未寫出 |
+| 說明句 | `test/unit-report.test.mjs` | `buildReport`(截圖成敗皆有)與 `buildUpdateListMd` 之範圍說明句及位置 |
+| 完整掃描 | `test/WScanDep.test.mjs`「test」 | 鍵序含 `scope`;`result.md` 含範圍說明(需連網與真 ex-sbom) |
+| 不受影響:安裝時限(R-NPM-TIMEOUT-01) | `test/api-npmInstall.test.mjs`、`test/unit-npmInstallTimeout.test.mjs`、`test/api-wsdEntry.test.mjs`「should stop npm install with a timeout error…」 | 同一行 `spawn` 改動後仍綠 |
+
+### 變異(2026-10-30 run01,皆被抓到;完整表見報告)
+
+M1 移除 `--omit=dev`(= 修前);M2 加 `--omit=peer`;M4 `result.json` 不寫 `scope`;M5 `scope` 值為 `'all'`;M6 `result.md` 不寫範圍;M7 `待更新套件.md` 不寫範圍;M8 全量安裝後依名稱刪 `devDependencies` 所列者.
+
+### 變異(2026-10-30 run02,規則 7;15 個皆被抓到,腳本副本 `C:\opensrcOper\dnow\20261030151214\agent-out\run02-evidence\mutate.mjs`)
+
+M0 = run01 之碼(不傳環境副本且無驗證)12 案紅;M1 不移除環境變數(保留驗證)7 案紅;M2 只移除 `include` 6 案紅;M3 比對不分大小寫去掉 `/i` 2 案紅;M4 過度移除(所有 `npm_config_*`)單元 1 案紅;M5 改動 `process.env` 而非副本 8 案紅;M6 不呼叫驗證 5 案紅;M7 驗證只看隱藏鎖定檔(去 `package-lock.json` 之落地檢查)1 案紅;M8 驗證只看 `package-lock.json` 2 案紅;M9 去落地檢查(`dev:true` 一律算裝入,誤報)10 案紅;M10 去「有套件卻無鎖定檔」之 fail-closed 1 案紅;M11 `devOptional` 也當 dev(誤報)1 案紅;M12 鎖定檔損毀當作沒有(fail-open)1 案紅;M13 訊息不截斷 1 案紅;M14 訊息去掉排除方式 5 案紅.

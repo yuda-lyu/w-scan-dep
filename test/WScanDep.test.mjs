@@ -17,7 +17,7 @@ describe('WScanDep', function() {
 
     let fpIn = './test/prj/package.json'
     let fdOut = './test/output'
-    let ks = ['date', 'source', 'outputDir', 'tools', 'osv', 'grype', 'exsbom', 'updateList']
+    let ks = ['date', 'source', 'outputDir', 'scope', 'tools', 'osv', 'grype', 'exsbom', 'updateList']
 
     it('test', async function() {
         let r = await wsd(fpIn, fdOut)
@@ -26,6 +26,10 @@ describe('WScanDep', function() {
         //result.json之欄位
         let j = JSON.parse(fs.readFileSync(`${fdOut}/result.json`, 'utf8'))
         assert.strict.deepEqual(Object.keys(j), ks)
+
+        //掃描範圍只算 dependencies(Gitea #27): result.json 之範圍欄位、result.md 之說明句; 隔離安裝不含 devDependencies(test/prj 之 package.json 無 devDependencies, 此處只驗欄位與說明)
+        assert.strict.strictEqual(j.scope, 'dependencies')
+        assert.strict.ok(fs.readFileSync(`${fdOut}/result.md`, 'utf8').includes('- 掃描範圍：僅 dependencies（正式相依樹，含其所附之執行檔）'))
 
         //各報告檔案存在
         assert.strict.ok(fs.existsSync(`${fdOut}/result.md`))

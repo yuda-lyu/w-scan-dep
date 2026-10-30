@@ -3,7 +3,7 @@
 // 或引入風險套件之外部中介),再由上層自有套件連鎖重發版,該漏洞即消失。
 // 產出 z待更新套件.md:以「底層自有套件」分組列出待更新之外部套件 + 連鎖更新鏈。
 import { spawnSync } from 'node:child_process'
-import { SELF_OWNED, PACKAGE_NOTES } from './config.mjs'
+import { SELF_OWNED, PACKAGE_NOTES, SCAN_SCOPE_NOTE } from './config.mjs'
 
 const isOwn = (node) => node.root === true || SELF_OWNED(node.name)
 const normFixed = (f) => (!f || f === '--' || f === '') ? '' : f
@@ -132,6 +132,7 @@ export function buildUpdateListMd({ target, date, updateList, exsbomFailed = fal
     L.push('')
     L.push(`- 產生日期：${date}`)
     L.push(`- 掃描目標：\`${target}\``)
+    L.push(`- 掃描範圍：${SCAN_SCOPE_NOTE}；本清單之引入路徑亦只含正式相依樹。`)
     L.push('')
     // ex-sbom 截圖失敗時,其判定之漏洞套件未納入(2026-10-29,Gitea #24)
     if (exsbomFailed) {

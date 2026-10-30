@@ -27,6 +27,12 @@ export const TOOLS = [
     { key: 'ex-sbom', repo: 'nics-tw/ex-sbom', exeName: 'ex-sbom.exe' },
 ]
 
+// 掃描範圍(2026-10-30,建議w-scan-dep調整.md〔Gitea #27〕,使用者裁定):掃描對象為網頁前後端服務或編譯出之應用程式(app),
+// 只算 dependencies 所提供者(程式碼與其所附之執行檔);devDependencies 之開發與建置工具不在範圍(不是服務,也不會包入 app 執行,
+// 其風險由執行機自行掃描或以防毒軟體處理)。值寫入 result.json 之 scope,說明句寫入 result.md
+export const SCAN_SCOPE = 'dependencies'
+export const SCAN_SCOPE_NOTE = '僅 dependencies（正式相依樹，含其所附之執行檔）；devDependencies 之開發與建置工具不在範圍內（其風險由執行機自行掃描或以防毒軟體處理）'
+
 // 已知套件之人工說明(領域知識,非掃描器輸出)。
 // 報告產製時,若掃描結果命中對應套件名,則附上此說明段落。
 // vue 之 Vue2 已知漏洞表由使用者提供之截圖(image-3.png)轉為 markdown 表格。
