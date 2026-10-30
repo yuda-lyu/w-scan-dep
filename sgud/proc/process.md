@@ -12,7 +12,7 @@
 
 API 為 `WScanDep(fpIn, fdOut)`：`fpIn` 傳 package.json 檔路徑或其所在資料夾，`fdOut` 傳輸出資料夾。**不接受第三參數**（原 `opt.fdTools` 於 2026-10-29 移除，傳入即 reject）；掃描工具存於 `ensureBins` 快取（預設 `<套件根>/bin-cache/`，可由環境變數 `W_BIN_CACHE` 改位置、多個專案共用），見 README〈外部執行檔〉。快取位置若落在 `fdOut` 之 `test`、`pics`、`exsbom-work` 內會 throw（`src/layout.mjs` `assertToolsOutside`）。
 
-同時掃描多個專案：須以**不同 node 程序**且**不同 fdOut** 執行（2026-10-03 起支援）。同一程序內並行不支援（npm install、syft 等為同步呼叫，會阻塞另一掃描之計時與瀏覽器操作）；同一 fdOut 並行不支援（test、scan、pics 互相覆蓋）。
+同時掃描多個專案：須以**不同 node 程序**且**不同 fdOut** 執行（2026-10-03 起支援）。同一程序內並行不支援（syft、grype、osv-scanner 等為同步呼叫，會阻塞另一掃描之計時與瀏覽器操作；npm install 於 2026-10-29 改為非同步，不改變此結論）；同一 fdOut 並行不支援（test、scan、pics 互相覆蓋）。
 
 - 專案內建入口：`g.mjs`（`./test/prj/package.json` → `./test/output`），`node g.mjs`
 - 臨時掃描他案之 package.json：於 `tmp/` 建 runner，避免污染 `test/`
@@ -35,12 +35,12 @@ test().catch((err) => { console.log(err) })
 
 | 產物 | 重跑時 |
 | --- | --- |
-| `fdOut/test` 之 `package-lock.json`、`node_modules` | 安裝前自動刪除並回驗（`src/install.mjs`）；刪不掉（被占用）即 throw 中止。`test/` 內其他檔不刪 |
+| `fdOut/test` 之 `package-lock.json`、`node_modules` | 安裝前自動刪除並回驗（`src/install.mjs`）；刪不掉（被占用）即 throw 中止。`test/` 內其他檔不刪。`npm install` 有時限（預設 20 分鐘，環境變數 `W_NPM_INSTALL_TIMEOUT` 秒；2026-10-29 起），逾時即結束整個安裝子行程樹並 throw。syft／grype／osv-scanner 亦各有單次時限（2026-10-30 起；`W_SYFT_TIMEOUT` 預設 3600 秒、`W_GRYPE_TIMEOUT` 預設 1800 秒〔首次須下載漏洞資料庫〕、`W_OSV_SCANNER_TIMEOUT` 預設 600 秒），逾時即結束該工具之子行程樹並 throw（不寫出 `result.*`） |
 | `fdOut/scan` 之 osv 產物 | 執行前自動刪除；osv-scanner 離開碼非 0/1/128 即 throw（`src/scan.mjs` `runOsv`） |
 | `fdOut/scan` 之 syft/grype 產物 | 成功即覆寫，失敗即 throw |
-| `fdOut/pics` | ex-sbom 就緒後才整夾刪除重建（啟動失敗時保留上次之截圖，`src/exsbom.mjs` `captureExSbom`） |
+| `fdOut/pics` | ex-sbom 就緒後才整夾刪除重建（`src/exsbom.mjs` `captureExSbom`）；2026-10-29 起 ex-sbom 任何失敗時 `WScanDep` 刪除整夾（上次或本次殘缺之截圖不與本次 `result.*` 並存），`result.json` 之 `exsbom.ok=false` |
 | `fdOut/exsbom-work` | ex-sbom 之工作目錄；每次掃描一個專用子夾，結束後刪除，空了即刪根；刪不掉只警告（交付前手動刪）。開始時清除建立者已不存在之舊子夾 |
-| `result.json`、`result.md`、`待更新套件.md` | 成功即覆寫；中途失敗時舊檔留存但函式 reject |
+| `result.json`、`result.md`、`待更新套件.md` | 成功即覆寫；中途失敗時舊檔留存但函式 reject。ex-sbom 截圖失敗不算中途失敗（2026-10-29 起）：照常覆寫，截圖欄位標明失敗 |
 | 掃描工具（`ensureBins` 快取） | 刻意保留：快取命中亦校驗大小與 SHA-256，符合即直接用（省 162MB 與數分鐘）；不符則刪除重取。下載、解壓、校驗皆由 wsemi `fsEnsureBins` 處理，於快取夾內暫存夾完成後才原子更名（中斷不會留下殘缺執行檔）；舊 sha256 之目錄不自動清（要清自行刪 `bin-cache/<sha256>/`） |
 
 故重跑不需手動清檔。若掃描中途失敗，`result.*` 為上一次之內容，勿當本次結果交付。
@@ -51,7 +51,7 @@ test().catch((err) => { console.log(err) })
 
 | 路徑 | 內容 |
 | --- | --- |
-| `result.json` | 檢測數據（工具版本標籤、osv/grype 結果、截圖相對路徑、連鎖更新清單） |
+| `result.json` | 檢測數據（工具版本標籤、osv/grype 結果、截圖相對路徑、截圖成敗 `exsbom.ok`/`exsbom.error`、上傳 ex-sbom 前剔除之循環關係 `exsbom.removedRelationships`、連鎖更新清單） |
 | `result.md` | 掃描報告，圖以 `./pics/` 相對路徑引用 |
 | `待更新套件.md` | 連鎖更新清單，依底層自有套件分組 |
 | `pics/*.png` | ex-sbom 拓撲總覽 + 各漏洞套件彈窗截圖 |
@@ -64,6 +64,7 @@ test().catch((err) => { console.log(err) })
 ## 8. 結果判讀
 
 - 三項工具資料庫不同，結果本就不一致；報告已做去重彙整。
+- **截圖是否可用**（2026-10-29 起）：先看 `result.json` 之 `exsbom.ok`；`false` 時無截圖，原因在 `exsbom.error`（截圖期間意外結束時含 `ex-sbom.log` 之 `fatal error`/`panic` 摘錄），報告之綜合句只含 osv-scanner 與 grype。`exsbom.removedRelationships` 非空表示 SBOM 含相依循環、拓撲截圖之層級係剔除該些關係後之結果（ex-sbom v0.2.0 之限制，見規則帳本 R-EXSBOM-CYCLE-01）。
 - `xlsx`、`vue` 於 `src/config.mjs` 之 `PACKAGE_NOTES` 有人工說明（xlsx 屬 osv-scanner 誤報、vue2 屬框架升級議題），命中時自動附入報告，且不列入連鎖更新清單。
 - 自有套件判別為 `w-*` 前綴與 `wsemi`（`src/config.mjs` `SELF_OWNED`），決定「待更新套件.md」之分組起點；日後有其他命名於此擴充。
 

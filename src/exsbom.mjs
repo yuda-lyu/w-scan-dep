@@ -7,10 +7,17 @@
 //  2) 服務埠:ex-sbom 讀 PORT 環境變數(main.go:56-59),改自 EXSBOM_PORT_FIRST 起依序選用。
 //  3) 身分:埠被占用時 ex-sbom 以離開碼 0 結束(main.go:78-80 不處理 bind 錯誤),且只綁 127.0.0.1 之服務
 //     可與它同埠並存;故就緒須「該埠之監聽 PID 恰為本次子程序」,不能只認頁面標題。)
-import { mkdir, rm, mkdtemp, readdir, rmdir, readFile, open } from 'node:fs/promises'
+// (2026-10-29 修正,見 建議w-scan-dep修正.md(Gitea #24):
+//  1) ex-sbom v0.2.0 遇相依循環之 SBOM 即無限遞迴而結束:上傳前剔除構成循環之關係(breakDependencyCycles),剔除者回傳供呼叫端呈現;
+//  2) 截圖期間意外結束時,錯誤訊息附 ex-sbom.log 之結束原因(exitReasonFromLog),不再只寫「意外結束」。)
+// (2026-10-30 修正:埠之監聽者之身分確認改用 wsemi execProcessPortPidsSync(useBoth),不再自行解析 netstat——
+//  Windows 11 26300 + KB5127936 之 TCP 狀態值錯誤,netstat 會整列漏列新起之監聽、對外連線反列 LISTENING;
+//  選埠用之全表快照仍為 netstat(listeningPorts),漏列只會使之多選到被占用之埠而換埠重試。)
+import { mkdir, rm, mkdtemp, readdir, rmdir, readFile, writeFile, open } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { chromium } from 'playwright'
+import execProcessPortPidsSync from 'wsemi/src/execProcessPortPidsSync.mjs'
 import { SHOTS_DIR, EXSBOM_PORT_FIRST, EXSBOM_PORT_LAST } from './config.mjs'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -20,13 +27,15 @@ const SUB_RE = /^(\d+)-[A-Za-z0-9]{6}$/ // 本次專用子夾:<pid>-<mkdtemp 6 �
 const MAX_ATTEMPTS = 5
 const READY_MS = 90000 // 每次嘗試之就緒期限(牆鐘)
 
-// netstat -ano 之 TCP 監聽列 → Map<port, Set<pid>>。監聽列以外部位址 0.0.0.0:0/[::]:0 判定,不依賴在地化之狀態欄
+// netstat -ano 之 TCP 監聽列 → Map<port, Set<pid>>,只供選埠(listeningPorts)之全表快照。監聽列只以外部位址 0.0.0.0:0/[::]:0 判定,
+// 不看狀態欄:在地化之狀態字不可靠,且 Windows 11 26300(KB5127936)之 TCP 狀態值錯誤,對外連線可被列為 LISTENING(2026-10-30 起不再以 LISTENING 為或條件)。
+// 該表亦會漏列新起之監聽,故不用於身分確認(見 portListeners)
 export function parseNetstat(text) {
     const map = new Map()
     for (const line of String(text).split(/\r?\n/)) {
         const t = line.trim().split(/\s+/)
         if (t[0] !== 'TCP' || t.length < 5) continue
-        if (t[3] !== 'LISTENING' && !/^(0\.0\.0\.0|\[::\]):0$/.test(t[2])) continue
+        if (!/^(0\.0\.0\.0|\[::\]):0$/.test(t[2])) continue
         const port = Number(t[1].slice(t[1].lastIndexOf(':') + 1))
         const pid = Number(t[t.length - 1])
         if (!Number.isInteger(port) || !Number.isInteger(pid)) continue
@@ -36,7 +45,8 @@ export function parseNetstat(text) {
     return map
 }
 
-// 執行 netstat;失敗即拋錯(不可把「查不到」當成「沒人占用」)
+// 執行 netstat 取全表快照,只供選埠(漏列只會多選到實際被占用之埠:bind 失敗或身分確認不符即換埠,有 MAX_ATTEMPTS 重試);失敗即拋錯(不可把「查不到」當成「沒人占用」)。
+// wsemi 只提供單一埠之查詢,不提供全表;逐埠查詢每次約 1 秒,不適用於掃描整個埠區間
 export function listeningPorts() {
     const r = spawnSync(join(SYS32, 'netstat.exe'), ['-ano'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true })
     if (r.error || r.status !== 0) throw new Error(`netstat 執行失敗:${r.error?.message || `exit ${r.status}`}`)
@@ -82,6 +92,106 @@ export function classifyExSbomLog(text) {
     return { fatal, warn, scannedPath }
 }
 
+// ex-sbom v0.2.0 之相依深度計算(上游 internal/service/sbom/spdx_sbom.go:140 getSpdxDependencyDepthMap)走訪時不記錄已走過之節點,
+// 相依關係含循環(npm 常見,如 es-abstract ⇄ string.prototype.trim)即無限遞迴,以 fatal error: stack overflow 結束(離開碼 2)。
+// 其建圖不看關係類型:每筆 relationships 皆為 spdxElementId → relatedSpdxElement 之邊(識別碼去 SPDXRef- 前綴;外部文件參照取其文件名),
+// 略過一端為 DOCUMENT、DocumentRoot-*、File-* 者,自入度 0 之節點遞迴。本套件依同一建圖以深度優先走訪找出回邊並剔除,剔除後之圖無循環。
+// 只影響 ex-sbom 拓撲之層級呈現;grype 與 osv-scanner 讀 syft 之原檔,不受影響。上游缺陷依專案原則在本套件繞過,不回報上游。
+const nodeKey = (id) => {
+    const s = String(id)
+    if (s.startsWith('DocumentRef-')) return s.slice('DocumentRef-'.length).split(':')[0]
+    return s.startsWith('SPDXRef-') ? s.slice('SPDXRef-'.length) : s
+}
+const isGeneratedNode = (k) => k === 'DOCUMENT' || k.startsWith('DocumentRoot-') || k.startsWith('File-')
+
+// 回傳 { doc, removed }:無循環時 doc 即原物件、removed 為 [];有則 doc 為剔除後之淺複本(原物件不動),
+// removed 為 [{ from, to, relationshipType, spdxElementId, relatedSpdxElement }](原 SBOM 中「from relationshipType to」之關係,from/to 為 名稱@版本)
+export function breakDependencyCycles(doc) {
+    const rels = Array.isArray(doc?.relationships) ? doc.relationships : []
+    const adj = new Map() // 節點 → [{ to, i }](i 為 relationships 之索引)
+    const indeg = new Map()
+    const order = [] // 節點首次出現之順序(使剔除結果可重現)
+    const touch = (k) => {
+        if (adj.has(k)) return
+        adj.set(k, [])
+        indeg.set(k, 0)
+        order.push(k)
+    }
+    rels.forEach((r, i) => {
+        const a = nodeKey(r?.spdxElementId)
+        const b = nodeKey(r?.relatedSpdxElement)
+        if (isGeneratedNode(a) || isGeneratedNode(b)) return
+        touch(a)
+        touch(b)
+        adj.get(a).push({ to: b, i })
+        indeg.set(b, indeg.get(b) + 1)
+    })
+    // 深度優先(以堆疊迭代,不受呼叫堆疊限制);先自入度 0 之節點(同 ex-sbom 之起點),再補走不可達之循環。邊指向「走訪中」之節點即回邊
+    const state = new Map() // 1 走訪中、2 已完成
+    const back = new Set()
+    for (const s of [...order.filter((k) => indeg.get(k) === 0), ...order]) {
+        if (state.has(s)) continue
+        state.set(s, 1)
+        const stack = [{ k: s, j: 0 }]
+        while (stack.length) {
+            const top = stack[stack.length - 1]
+            const edges = adj.get(top.k)
+            if (top.j >= edges.length) {
+                state.set(top.k, 2)
+                stack.pop()
+                continue
+            }
+            const { to, i } = edges[top.j++]
+            const st = state.get(to)
+            if (st === 1) back.add(i)
+            else if (!st) {
+                state.set(to, 1)
+                stack.push({ k: to, j: 0 })
+            }
+        }
+    }
+    if (!back.size) return { doc, removed: [] }
+    const label = new Map()
+    for (const p of doc.packages || []) {
+        if (p?.SPDXID && p.name) label.set(p.SPDXID, p.versionInfo ? `${p.name}@${p.versionInfo}` : String(p.name))
+    }
+    const removed = [...back].sort((x, y) => x - y).map((i) => {
+        const r = rels[i]
+        return {
+            from: label.get(r.spdxElementId) || String(r.spdxElementId),
+            to: label.get(r.relatedSpdxElement) || String(r.relatedSpdxElement),
+            relationshipType: r.relationshipType,
+            spdxElementId: r.spdxElementId,
+            relatedSpdxElement: r.relatedSpdxElement,
+        }
+    })
+    return { doc: { ...doc, relationships: rels.filter((_, i) => !back.has(i)) }, removed }
+}
+
+// ex-sbom.log 中本次嘗試(最後一個「=== port … ===」標頭之後)之結束原因:Go runtime 於行首輸出之最後一個 fatal error / panic 行
+// (含其前之 runtime: 說明行至多 2 行)及其後 after 行;無則取末 3 個非空行。每行至多 300 字、總長至多 maxChars 字
+export function exitReasonFromLog(text, { after = 20, maxChars = 1500 } = {}) {
+    const all = String(text).split(/\r?\n/)
+    let start = 0
+    all.forEach((l, i) => {
+        if (/^=== port \d+ /.test(l)) start = i + 1
+    })
+    const lines = all.slice(start)
+    const i = lines.findLastIndex((l) => /^(fatal error|panic):/.test(l))
+    let pick
+    if (i >= 0) {
+        let b = i
+        while (b > 0 && b > i - 2 && /^runtime: /.test(lines[b - 1])) b--
+        pick = lines.slice(b, i + 1 + after)
+    }
+    else {
+        pick = lines.filter((l) => l.trim()).slice(-3)
+    }
+    let s = pick.map((l) => (l.length > 300 ? `${l.slice(0, 300)}…` : l)).join('\n').trimEnd()
+    if (s.length > maxChars) s = `${s.slice(0, maxChars)}…`
+    return s
+}
+
 // 一次 tasklist 取得 PID → 映像名稱(失敗回空表,只用於提示)
 function processNames() {
     const r = spawnSync(join(SYS32, 'tasklist.exe'), ['/FO', 'CSV', '/NH'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true })
@@ -112,14 +222,17 @@ const isAlive = (pid) => {
     }
 }
 
-async function readTail(path, n) {
+// 讀 ex-sbom.log 之結束原因(讀不到回空字串,只用於訊息)
+async function logReason(path) {
     try {
-        return (await readFile(path, 'utf8')).trim().split(/\r?\n/).slice(-n).join('\n')
+        return exitReasonFromLog(await readFile(path, 'utf8'))
     }
     catch {
         return ''
     }
 }
+
+const exitText = (st) => (st.code !== null && st.code !== undefined ? `離開碼 ${st.code}` : `訊號 ${st.signal}`)
 
 async function waitExit(st, ms) {
     const end = Date.now() + ms
@@ -139,10 +252,28 @@ async function stopChild(ex) {
     return false
 }
 
+// 查詢監聽某埠之 PID 陣列(數字):wsemi execProcessPortPidsSync,useBoth 為 true(Windows 之 netstat 與 Get-NetTCPConnection 取聯集)。
+// 本機(Windows 11 26300 + KB5127936)之 TCP 狀態值錯誤,netstat 會整列漏列新起之監聽、對外連線反列 LISTENING,故身分確認不自行解析 netstat;
+// netstat 有列出時預設不再查 PowerShell,可能只得部分監聽者(如漏列同埠並存之 127.0.0.1 服務),故一律 useBoth。
+// 查詢失敗即拋錯(空陣列才是「已確認無人」,不可把失敗當成沒人占用);訊息取自 wsemi 之 settle 事件。
+// opt 供測試注入 { exec, platform, timeout }(exec 為 spawnSync 形,見 wsemi execProcessPortPidsSync)。同步呼叫,Windows 下每次約 1 秒(阻塞事件迴圈)
+export function portListeners(port, opt = {}) {
+    let msg = ''
+    const pids = execProcessPortPidsSync(port, {
+        ...opt,
+        useBoth: true,
+        onTrace: (e) => {
+            if (e.type === 'settle') msg = e.msg
+        },
+    })
+    if (pids === null) throw new Error(`查詢埠 ${port} 之監聽者失敗:${msg}`)
+    return pids
+}
+
 // 該埠之監聽 PID 集合是否恰為 {pid}
-const ownsPort = (port, pid) => {
-    const set = listeningPorts().get(port)
-    return { set: set || new Set(), ok: !!set && set.size === 1 && set.has(pid) }
+export function ownsPort(port, pid, opt = {}) {
+    const set = new Set(portListeners(port, opt))
+    return { set, ok: set.size === 1 && set.has(pid) }
 }
 
 async function probeTitle(port) {
@@ -160,7 +291,7 @@ async function probeTitle(port) {
 async function launchOnce(exe, cwd, port, logPath) {
     const fh = await open(logPath, 'a')
     await fh.write(`=== port ${port} ${new Date().toISOString()} ===\n`)
-    const st = { exited: false, code: null, error: null }
+    const st = { exited: false, code: null, signal: null, error: null }
     let child
     try {
         // stdout/stderr 直接寫入本次子夾之 log 檔(檔案描述元,無背壓);覆寫呼叫端可能已設之 PORT
@@ -170,9 +301,10 @@ async function launchOnce(exe, cwd, port, logPath) {
             windowsHide: true,
             env: { ...process.env, PORT: String(port), AUTO_OPEN_BROWSER: 'false', GIN_MODE: 'debug' },
         })
-        child.on('exit', (code) => {
+        child.on('exit', (code, signal) => {
             st.exited = true
             st.code = code
+            st.signal = signal
         })
         child.on('error', (err) => {
             st.exited = true
@@ -188,8 +320,8 @@ async function launchOnce(exe, cwd, port, logPath) {
         while (Date.now() < end) {
             await sleep(300)
             if (st.exited) {
-                const why = st.error ? `無法啟動(${st.error.code || st.error.message};exe=${exe};cwd=${cwd})` : `子程序於就緒前結束(離開碼 ${st.code})`
-                return { ok: false, reason: why, tail: await readTail(logPath, 3) }
+                const why = st.error ? `無法啟動(${st.error.code || st.error.message};exe=${exe};cwd=${cwd})` : `子程序於就緒前結束(${exitText(st)})`
+                return { ok: false, reason: why, tail: await logReason(logPath) }
             }
             const baseUrl = await probeTitle(port)
             if (!baseUrl) continue
@@ -201,15 +333,15 @@ async function launchOnce(exe, cwd, port, logPath) {
             }
         }
         await stopChild(ex)
-        return { ok: false, reason: `${READY_MS / 1000} 秒內未就緒`, tail: await readTail(logPath, 3) }
+        return { ok: false, reason: `${READY_MS / 1000} 秒內未就緒`, tail: await logReason(logPath) }
     }
     catch (e) {
-        await stopChild(ex).catch(() => {}) // 例如 netstat 失敗:不留下本次子程序
+        await stopChild(ex).catch(() => {}) // 例如查詢埠之監聽者失敗(portListeners 拋錯):不留下本次子程序
         throw e
     }
 }
 
-// 選埠並啟動,最多 MAX_ATTEMPTS 次。opt.snapshot 可注入選埠用之快照(測試用);就緒驗證一律以真實 netstat
+// 選埠並啟動,最多 MAX_ATTEMPTS 次。opt.snapshot 可注入選埠用之快照(測試用);就緒驗證一律以真實之埠監聽者查詢(portListeners)
 export async function startExSbom(exe, cwd, log = console.log, opt = {}) {
     const snapshot = opt.snapshot || listeningPorts
     const first = opt.first ?? EXSBOM_PORT_FIRST
@@ -237,7 +369,8 @@ export async function startExSbom(exe, cwd, log = console.log, opt = {}) {
 }
 
 // 清除前次殘留之工作子夾:只清名稱符合樣式、且建立它的程序已不存在者(進行中之他掃描不動)
-async function cleanStaleWork(workRoot, log) {
+// (匯出供測試;被占用而刪不掉者記警告並略過)
+export async function cleanStaleWork(workRoot, log) {
     let names = []
     try {
         names = await readdir(workRoot)
@@ -266,8 +399,10 @@ async function waitModalReady(page) {
     await sleep(500) // 收尾 render 穩定
 }
 
-// 主流程:回傳 { baseUrl, port, scannedPath, overviewShot, componentShots:[{name,version,shot}], summary }
-// opt.workRoot 必填(ex-sbom 工作目錄之根,WScanDep 傳 fdOut/exsbom-work);opt.snapshot、opt.onReady 供測試
+// 主流程:回傳 { baseUrl, port, scannedPath, overviewShot, componentShots:[{name,version,ids,shot}], summary, removedRelationships }
+// opt.workRoot 必填(ex-sbom 工作目錄之根,WScanDep 傳 fdOut/exsbom-work);opt.snapshot、opt.onReady、
+// opt.breakCycles(false 時不剔除循環,重現 ex-sbom 之原缺陷)供測試。
+// 失敗即 reject;此前已算出之剔除清單附於錯誤物件之 removedRelationships
 export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, log = console.log, opt = {}) {
     const workRoot = opt.workRoot
     if (!workRoot) throw new Error('captureExSbom 需指定 opt.workRoot(ex-sbom 之工作目錄根)')
@@ -278,7 +413,30 @@ export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, l
     let ex
     let browser
     let aborted = false
+    let removed = null
     try {
+        // 上傳前剔除構成循環之關係(見 breakDependencyCycles);有剔除時上傳本次子夾內之副本(檔名不變),原檔不動
+        let uploadPath = spdxPath
+        if (opt.breakCycles !== false) {
+            let doc
+            try {
+                doc = JSON.parse(await readFile(spdxPath, 'utf8'))
+            }
+            catch (e) {
+                throw new Error(`無法讀取或解析 SBOM(${spdxPath}):${e.message}`)
+            }
+            const r = breakDependencyCycles(doc)
+            removed = r.removed
+            if (removed.length) {
+                const dir = join(cwd, 'upload')
+                await mkdir(dir)
+                uploadPath = join(dir, basename(spdxPath))
+                await writeFile(uploadPath, JSON.stringify(r.doc), 'utf8')
+                const list = removed.slice(0, 5).map((x) => `${x.from} ${x.relationshipType} ${x.to}`).join(';')
+                log(`[ex-sbom] SBOM 之相依關係含循環(ex-sbom v0.2.0 遇之即無限遞迴而結束),上傳之副本剔除 ${removed.length} 筆:${list}${removed.length > 5 ? ' …' : ''}`)
+            }
+        }
+
         log('[ex-sbom] 啟動服務 ...')
         ex = await startExSbom(exsbomExe, cwd, log, opt)
         log(`[ex-sbom] 服務就緒:${ex.baseUrl}(PID ${ex.child.pid})`)
@@ -288,9 +446,15 @@ export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, l
         await rm(shotsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
         await mkdir(shotsDir, { recursive: true })
 
-        // 就緒後子程序若結束即中止:該埠可能被他掃描接手,前端之相對網址會打到對方
+        // 就緒後子程序若結束即中止:該埠可能被他掃描接手,前端之相對網址會打到對方。訊息附 log 之結束原因(子程序已結束,log 已完整)
+        let diedFired = false
         const died = new Promise((resolve, reject) => {
-            const fail = () => reject(new Error(`ex-sbom(PID ${ex.child.pid})於截圖期間意外結束,本次結果作廢`))
+            const fail = () => {
+                diedFired = true
+                logReason(ex.logPath).then((why) => {
+                    reject(new Error(`ex-sbom(PID ${ex.child.pid})於截圖期間意外結束(${exitText(ex.st)}),本次截圖作廢${why ? `;ex-sbom.log 摘錄:\n${why}` : ''}`))
+                })
+            }
             if (ex.st.exited) fail()
             else ex.child.once('exit', fail)
         })
@@ -316,7 +480,7 @@ export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, l
 
             // 上傳 SBOM(syft.spdx.json)
             log('[ex-sbom] 上傳 SBOM 並等待拓撲分析(可能較久)...')
-            await page.setInputFiles('#sbom-file-input', spdxPath)
+            await page.setInputFiles('#sbom-file-input', uploadPath)
 
             // 等分頁出現並點選,等拓撲載入
             await page.locator('#file-tabs > div').first().waitFor({ timeout: 60000 })
@@ -409,11 +573,27 @@ export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, l
             }
 
             // 回傳前重驗:截圖全程之服務仍為本次子程序
-            if (!ownsPort(ex.port, ex.child.pid).ok) throw new Error(`截圖完成時埠 ${ex.port} 之監聽者已非本次 ex-sbom,本次結果作廢`)
-            return { baseUrl, port: ex.port, scannedPath: lg.scannedPath, overviewShot, componentShots, summary }
+            const own = ownsPort(ex.port, ex.child.pid)
+            if (!own.ok) {
+                const who = describeOccupants(new Map([[ex.port, own.set]]), [ex.port]).join('')
+                throw new Error(`截圖完成時埠 ${ex.port} 之監聽者已非本次 ex-sbom(PID ${ex.child.pid};現為 ${who || '無'}),本次截圖作廢`)
+            }
+            return { baseUrl, port: ex.port, scannedPath: lg.scannedPath, overviewShot, componentShots, summary, removedRelationships: removed ?? [] }
         })()
         flow.catch(() => {})
-        return await Promise.race([flow, died])
+        try {
+            return await Promise.race([flow, died])
+        }
+        catch (e) {
+            // 子程序已結束時以其結束原因(含 log 摘錄)為準:頁面操作可能因服務消失而先失敗、exit 事件稍後才處理,故先短暫等之
+            if (!diedFired) await waitExit(ex.st, 2000)
+            if (diedFired) await died
+            throw e
+        }
+    }
+    catch (e) {
+        if (removed && e instanceof Error) e.removedRelationships = removed
+        throw e
     }
     finally {
         // 各步只記錄、不拋錯,不遮蔽原錯誤
@@ -423,9 +603,11 @@ export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, l
             const gone = await stopChild(ex).catch(() => false)
             let still = false
             try {
-                still = !!listeningPorts().get(ex.port)?.has(ex.child.pid)
+                still = portListeners(ex.port).includes(ex.child.pid)
             }
-            catch { /* 只影響訊息 */ }
+            catch {
+                still = true // 查詢失敗:無從確認,不宣稱埠已釋放(只影響訊息)
+            }
             log(`[ex-sbom] 服務${gone && !still ? '已關閉,埠已釋放' : `可能未完全關閉(PID ${ex.child.pid},埠 ${ex.port})`}`)
         }
         try {

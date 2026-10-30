@@ -84,6 +84,27 @@ export function buildReport({ target, toolVersions, scan, exsbom, date, picsPref
     )
     L.push('使用 ex-sbom 通過網頁呈現：')
     L.push('')
+    const exFailed = exsbom?.ok === false
+    if (exFailed) {
+        // 原因首行;截圖期間意外結束者其後為 ex-sbom.log 摘錄,取前 6 行附於程式碼區塊(全文見 result.json 之 exsbom.error)
+        const [head, ...excerpt] = String(exsbom.error || '').split('\n')
+        L.push(`ex-sbom 截圖失敗，本次無截圖（${head.replace(/;ex-sbom\.log 摘錄:$/, '')}）。`)
+        L.push('')
+        if (excerpt.length) {
+            L.push('ex-sbom 結束前之輸出（摘錄）：')
+            L.push('')
+            L.push('```')
+            L.push(...excerpt.slice(0, 6))
+            L.push('```')
+            L.push('')
+        }
+    }
+    const removed = exFailed ? [] : (exsbom?.removedRelationships || [])
+    if (removed.length) {
+        const list = removed.map((r) => `${r.from} ${r.relationshipType} ${r.to}`).join('、')
+        L.push(`註：本次 SBOM 之相依關係含循環，ex-sbom（v0.2.0）無法處理含循環之相依關係，故交給 ex-sbom 之 SBOM 副本剔除 ${removed.length} 筆構成循環之關係（只影響下方拓撲之層級呈現，不影響 osv-scanner 與 grype 之結果）：${list}。`)
+        L.push('')
+    }
     if (exsbom?.overviewShot) {
         L.push(`![ex-sbom 拓撲總覽](${rel(exsbom.overviewShot)})`)
         L.push('')
@@ -110,10 +131,11 @@ export function buildReport({ target, toolVersions, scan, exsbom, date, picsPref
 
     // 三項工具之綜合(去重,以套件名為單位;各工具資料庫不同故標注範圍略有差異)
     const allNames = new Set([...pkgs.map((p) => p.name), ...exPkgs.map((c) => c.name)].filter(Boolean))
+    const toolsText = exFailed ? 'osv-scanner 與 grype 兩項工具(各自資料庫不同；ex-sbom 截圖失敗，未納入)' : 'osv-scanner、grype 與 ex-sbom 三項工具(各自資料庫不同)'
     if (allNames.size) {
-        L.push(`綜合 osv-scanner、grype 與 ex-sbom 三項工具(各自資料庫不同)，本次被標注為漏洞之套件(以套件名去重)共 ${allNames.size} 種：${[...allNames].join('、')}。`)
+        L.push(`綜合 ${toolsText}，本次被標注為漏洞之套件(以套件名去重)共 ${allNames.size} 種：${[...allNames].join('、')}。`)
     } else {
-        L.push('本次掃描未偵測到被標注為漏洞之套件。')
+        L.push(exFailed ? '本次 osv-scanner 與 grype 未偵測到被標注為漏洞之套件(ex-sbom 截圖失敗，未納入)。' : '本次掃描未偵測到被標注為漏洞之套件。')
     }
     L.push('')
 

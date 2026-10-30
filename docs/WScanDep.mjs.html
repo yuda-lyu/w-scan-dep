@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#runTool">runTool</a></li></ul>
     
 </nav>
 
@@ -56,23 +56,27 @@
 //  同時掃描多個專案須以不同 node 程序、不同 fdOut 執行)
 // (2026-10-29 外部執行檔改依 bin/manifest.json 經 ensureBins(wsemi fsEnsureBins)取得並校驗,存於快取而非 fdOut/tools;
 //  移除 opt.fdTools(改由環境變數 W_BIN_CACHE 指定共用快取),見 README〈外部執行檔〉與〈Breaking changes〉)
+// (2026-10-29 修正,見 建議w-scan-dep修正.md(Gitea #24): ex-sbom 之任何失敗只作廢截圖(result.json 之 exsbom.ok/error 標明),
+//  syft/grype/osv-scanner 之結果照常寫出;含相依循環之 SBOM 於上傳前剔除構成循環之關係(exsbom.removedRelationships);
+//  npm install 加時限(環境變數 W_NPM_INSTALL_TIMEOUT,秒,預設 1200),逾時即結束安裝子行程樹並拋錯)
+// (2026-10-30 修正,同上之同類: syft、grype、osv-scanner 亦加單次時限(環境變數 W_SYFT_TIMEOUT 預設 3600 秒、W_GRYPE_TIMEOUT 預設 1800 秒、
+//  W_OSV_SCANNER_TIMEOUT 預設 600 秒),逾時即結束該工具之子行程樹並拋含「逾時」與工具名之錯誤;三個工具改為非同步執行,見 proc.mjs)
 // 流程:
 //   0) 經 ensureBins 取得 syft/grype/osv-scanner/ex-sbom(清單為 bin/manifest.json,校驗 SHA-256 與大小;取不到時即中止,不待 npm install 後才發現)
-//   1) 清除 fdOut/test 上次安裝殘留,複製 package.json 並 npm install(產出 package-lock.json 與 node_modules)
+//   1) 清除 fdOut/test 上次安裝殘留,複製 package.json 並 npm install(產出 package-lock.json 與 node_modules;逾時即中止)
 //   2) 以上述工具掃描 fdOut/test
-//   3) ex-sbom 各漏洞套件截圖存 fdOut/pics/*.png
-//   4) 檢測數據(含截圖相對路徑 ./pics、結果文字)寫入 fdOut/result.json
+//   3) ex-sbom 各漏洞套件截圖存 fdOut/pics/*.png(失敗時只作廢截圖、刪除 pics,續寫其餘產出)
+//   4) 檢測數據(含截圖相對路徑 ./pics、截圖成敗與原因、結果文字)寫入 fdOut/result.json
 //   5) 產製 md 報告(圖以相對路徑 ./pics)寫入 fdOut/result.md
 //   6) 連鎖更新清單寫入 fdOut/待更新套件.md
-// 回傳 'ok'。
-import { mkdir, copyFile, writeFile, access, stat } from 'node:fs/promises'
-import { spawnSync } from 'node:child_process'
+// 回傳 'ok'(截圖失敗時亦同,由 result.json 之 exsbom.ok 辨識)。
+import { mkdir, copyFile, writeFile, access, stat, rm } from 'node:fs/promises'
 import { join, basename, dirname, resolve } from 'node:path'
 import { resolveLayout, assertToolsOutside } from './layout.mjs'
-import { clearNpmState, NPM_STATE } from './install.mjs'
+import { clearNpmState, NPM_STATE, npmInstall, npmInstallTimeoutMs } from './install.mjs'
 import ensureBins from './ensureBins.mjs'
 import { readToolVersions } from './toolVersions.mjs'
-import { runScan } from './scan.mjs'
+import { runScan, scanTimeoutsMs, SCAN_TIMEOUTS } from './scan.mjs'
 import { captureExSbom } from './exsbom.mjs'
 import { buildReport } from './report.mjs'
 import { computeUpdateList, buildUpdateListMd } from './updatelist.mjs'
@@ -124,10 +128,16 @@ function serializeUpdateList(ul) {
  * 外部執行檔不含於npm包，快取預設為套件根之bin-cache/，可由環境變數W_BIN_CACHE改位置(多個專案共用同一份)；W_BIN_MIRROR指定離線鏡像，W_BIN_OFFLINE=1時不連網；部署前可預先呼叫WScanDep.ensureBins()，見README〈外部執行檔〉。
  * ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行
  *
+ * npm install之時限由環境變數W_NPM_INSTALL_TIMEOUT(秒，正數，至多2147483)指定，預設1200(20分鐘)，逾時即結束整個安裝子行程樹並reject含「逾時」之錯誤；值不為正數時於任何下載與寫入前reject。
+ * syft、grype、osv-scanner之單次執行時限各由環境變數W_SYFT_TIMEOUT(預設3600秒)、W_GRYPE_TIMEOUT(預設1800秒，首次執行含下載漏洞資料庫)、W_OSV_SCANNER_TIMEOUT(預設600秒，osv-scanner對markdown與json各跑一次、各自計時)指定(秒，正數，至多2147483)，逾時即結束該工具之整個子行程樹並reject含「逾時」與工具名之錯誤(此時不寫出result.*)；值不為正數時於任何下載與寫入前reject。預設值依實測(1364個元件：syft暖6秒、冷81秒、本機被他程序占滿時519秒；grype冷資料庫86秒；osv-scanner每次3.5秒內)訂定，取實測最大值之5倍以上。
+ *
+ * ex-sbom之任何失敗(啟動失敗、截圖期間意外結束、分析SBOM失敗等)只作廢截圖：仍resolve 'ok'並寫出syft、grype、osv-scanner之結果，result.json之exsbom.ok為false、exsbom.error為原因(截圖期間意外結束時附ex-sbom.log之fatal error/panic及其後數行)，並刪除fdOut/pics；呼叫端以exsbom.ok判斷是否採用截圖。
+ * ex-sbom v0.2.0對相依關係含循環之SBOM會無限遞迴而結束(npm常見，如es-abstract與string.prototype.trim互相依賴)：本套件上傳前於副本剔除構成循環之關係(syft原檔不動，grype與osv-scanner不受影響)，剔除者列於result.json之exsbom.removedRelationships([{ from, to, relationshipType, spdxElementId, relatedSpdxElement }]，無循環為[]，截圖失敗且尚未算出時為null)。
+ *
  * @class
  * @param {String} fpIn 輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串
  * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝之掃描目標)、result.json、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此
- * @returns {Promise} 回傳Promise，resolve回傳'ok'，reject回傳錯誤訊息
+ * @returns {Promise} 回傳Promise，resolve回傳'ok'(截圖失敗時亦同，以result.json之exsbom.ok辨識)，reject回傳錯誤訊息
  * @example
  *
  * import wsd from 'w-scan-dep'
@@ -142,10 +152,14 @@ function serializeUpdateList(ul) {
  *     // => 'ok'
  *
  *     // 產出於fdOut:
- *     //   result.json 檢測數據(含各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑、連鎖更新清單)
+ *     //   result.json 檢測數據(含各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
  *     //   result.md 掃描報告
  *     //   待更新套件.md 連鎖更新清單
- *     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖
+ *     //   pics/*.png ex-sbom拓撲總覽與各漏洞套件截圖(截圖失敗時無)
+ *
+ *     // 截圖是否成功:
+ *     // let j = JSON.parse(fs.readFileSync('./test/output/result.json', 'utf8'))
+ *     // if (!j.exsbom.ok) console.log('ex-sbom截圖失敗', j.exsbom.error)
  *
  *     // 部署前預先取得掃描工具(連網機器設W_BIN_CACHE=&lt;資料夾>後執行，該資料夾即可作為離線鏡像W_BIN_MIRROR):
  *     // let bins = await wsd.ensureBins()
@@ -162,6 +176,10 @@ async function WScanDep(fpIn, fdOut, opt) {
     if (opt !== undefined &amp;&amp; opt !== null) {
         throw new Error('WScanDep 已不接受第三參數 opt(原 opt.fdTools 已移除);掃描工具存於快取,改以環境變數 W_BIN_CACHE 指定,見 README〈外部執行檔〉')
     }
+
+    // npm install 與 syft/grype/osv-scanner 之時限先行驗證:格式錯誤於任何下載與寫入前即拋錯
+    const installTimeoutMs = npmInstallTimeoutMs()
+    const scanTimeouts = scanTimeoutsMs()
 
     const log = (m) => console.log(m)
     const now = new Date()
@@ -198,20 +216,31 @@ async function WScanDep(fpIn, fdOut, opt) {
     log(`[npm] 清除 test 上次安裝殘留(${NPM_STATE.join('、')})...`)
     await clearNpmState(testDir)
     await copyFile(pkgJson, join(testDir, 'package.json'))
-    log('[npm] 於 test 全新安裝相依(npm install)...')
-    const ni = spawnSync('npm install --no-audit --no-fund', {
-        cwd: testDir, shell: true, stdio: 'inherit',
-    })
-    if (ni.status !== 0) throw new Error(`npm install 失敗(exit ${ni.status})`)
+    log(`[npm] 於 test 全新安裝相依(npm install,時限 ${installTimeoutMs / 1000} 秒,環境變數 W_NPM_INSTALL_TIMEOUT 可調)...`)
+    await npmInstall(testDir, { timeoutMs: installTimeoutMs })
     const scanTarget = testDir
 
     // 2) 掃描
-    log('[scan] 執行 syft / grype / osv-scanner ...')
-    const scan = await runScan(tools, scanTarget, scanDir, log)
+    log(`[scan] 執行 syft / grype / osv-scanner(單次時限 ${Object.entries(scanTimeouts).map(([k, ms]) => `${k} ${ms / 1000} 秒`).join('、')};環境變數 ${Object.values(SCAN_TIMEOUTS).map((v) => v.envName).join('、')} 可調)...`)
+    const scan = await runScan(tools, scanTarget, scanDir, log, scanTimeouts)
 
     // 3) ex-sbom 網頁截圖(存 fdOut/pics;ex-sbom 之工作目錄為 fdOut/exsbom-work 下本次專用子夾,結束後刪除)
+    //    任何失敗只作廢截圖:刪除 pics(不留上次或本次殘缺之截圖,使 result.* 與 pics 一致),截圖欄位標明失敗與原因,由呼叫端決定是否採用
     log('[ex-sbom] 網頁展示與截圖 ...')
-    const exsbom = await captureExSbom(tools['ex-sbom'].exePath, scan.syft.spdx, picsDir, log, { workRoot: exsbomDir })
+    let exsbom
+    try {
+        exsbom = { ok: true, error: null, ...await captureExSbom(tools['ex-sbom'].exePath, scan.syft.spdx, picsDir, log, { workRoot: exsbomDir }) }
+    }
+    catch (e) {
+        log(`[ex-sbom] 截圖失敗,本次截圖作廢(syft/grype/osv-scanner 之結果照常寫出):${e.message}`)
+        try {
+            await rm(picsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+        }
+        catch (er) {
+            log(`[ex-sbom] 警告:無法刪除截圖夾 ${picsDir}(${er.code || er.message}),其內截圖非本次結果`)
+        }
+        exsbom = { ok: false, error: e.message, overviewShot: null, componentShots: [], summary: [], removedRelationships: e.removedRelationships ?? null }
+    }
 
     // 4) 檢測數據 result.json(截圖以相對路徑 ./pics)
     const picRel = (abs) => './pics/' + basename(abs)
@@ -224,11 +253,14 @@ async function WScanDep(fpIn, fdOut, opt) {
         osv: { summary: (scan.osv.mdText || '').split('\n').slice(0, 2).join(' ').trim(), markdown: scan.osv.mdText, packages: scan.osv.packages },
         grype: { matches: scan.grype.matches },
         exsbom: {
+            ok: exsbom.ok,
+            error: exsbom.error,
             overview: exsbom.overviewShot ? picRel(exsbom.overviewShot) : null,
             components: (exsbom.componentShots || []).map((c) => ({
                 name: c.name, version: c.version, ids: c.ids, image: picRel(c.shot),
             })),
             levelSummary: exsbom.summary,
+            removedRelationships: exsbom.removedRelationships,
         },
         updateList: serializeUpdateList(updateList),
     }
@@ -239,7 +271,7 @@ async function WScanDep(fpIn, fdOut, opt) {
     await writeFile(join(outDir, 'result.md'), md, 'utf8')
 
     // 6) 連鎖更新清單
-    const upMd = buildUpdateListMd({ target: pkgJson, date, updateList })
+    const upMd = buildUpdateListMd({ target: pkgJson, date, updateList, exsbomFailed: !exsbom.ok })
     await writeFile(join(outDir, '待更新套件.md'), upMd, 'utf8')
 
     log('════════════════════════════════════════════')
@@ -247,7 +279,8 @@ async function WScanDep(fpIn, fdOut, opt) {
     log(`  ${join(outDir, 'result.json')}`)
     log(`  ${join(outDir, 'result.md')}`)
     log(`  ${join(outDir, '待更新套件.md')}`)
-    log(`  ${picsDir}(${(exsbom.componentShots || []).length + 1} 張截圖)`)
+    if (exsbom.ok) log(`  ${picsDir}(${(exsbom.componentShots || []).length + 1} 張截圖)`)
+    else log('  ex-sbom 截圖失敗,無截圖(原因見 result.json 之 exsbom.error)')
     log('════════════════════════════════════════════')
     return 'ok'
 }
@@ -270,7 +303,7 @@ export default WScanDep
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Oct 29 2026 00:56:58 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 09:54:02 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

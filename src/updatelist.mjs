@@ -125,7 +125,7 @@ export function computeUpdateList(target, scan, exsbom, log = console.log) {
 }
 
 // 產製 z待更新套件.md
-export function buildUpdateListMd({ target, date, updateList }) {
+export function buildUpdateListMd({ target, date, updateList, exsbomFailed = false }) {
     const { byOrigin, cascades } = updateList
     const L = []
     L.push('# 待更新套件清單')
@@ -133,6 +133,11 @@ export function buildUpdateListMd({ target, date, updateList }) {
     L.push(`- 產生日期：${date}`)
     L.push(`- 掃描目標：\`${target}\``)
     L.push('')
+    // ex-sbom 截圖失敗時,其判定之漏洞套件未納入(2026-10-29,Gitea #24)
+    if (exsbomFailed) {
+        L.push('> 註：本次 ex-sbom 截圖失敗，本清單只依 osv-scanner 與 grype 之結果，ex-sbom 判定之漏洞套件未納入。')
+        L.push('')
+    }
     L.push('> 原理：每個風險套件都由一或多個「最底層之自有套件」引入。只要該底層自有套件更新其直接依賴')
     L.push('>（風險套件本身，或引入風險套件之外部中介套件），再由上層自有套件連鎖重發版（cascade），')
     L.push('> 該漏洞即可消除。以下依「底層自有套件（修復起點）」分組，列出各自需更新之外部套件。')

@@ -2,10 +2,11 @@ import assert from 'assert'
 import fs from 'fs'
 import path from 'path'
 import http from 'http'
-import { spawn, spawnSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import wsd from '../src/WScanDep.mjs'
 import ensureBins from '../src/ensureBins.mjs'
 import { captureExSbom, listeningPorts, excludedPorts, pickPort } from '../src/exsbom.mjs'
+import { holdDir } from './tools/holdDir.mjs'
 
 
 //完整掃描(連網): 經 ensureBins 取得掃描工具(首次自 GitHub 下載並校驗, 存於 bin-cache/ 或 W_BIN_CACHE),
@@ -30,6 +31,13 @@ describe('WScanDep', function() {
         assert.strict.ok(fs.existsSync(`${fdOut}/result.md`))
         assert.strict.ok(fs.existsSync(`${fdOut}/待更新套件.md`))
         assert.strict.ok(fs.existsSync(`${fdOut}/pics`))
+
+        //截圖欄位(Gitea #24):ex-sbom 之失敗不再使 WScanDep reject,故須斷言截圖成功;含成敗、原因與上傳前剔除之循環關係
+        assert.strict.deepEqual(Object.keys(j.exsbom), ['ok', 'error', 'overview', 'components', 'levelSummary', 'removedRelationships'])
+        assert.strict.strictEqual(j.exsbom.ok, true, j.exsbom.error)
+        assert.strict.strictEqual(j.exsbom.error, null)
+        assert.strict.ok(fs.existsSync(path.join(fdOut, j.exsbom.overview)), j.exsbom.overview)
+        assert.strict.ok(Array.isArray(j.exsbom.removedRelationships))
 
         //result.json 記各工具之版本標籤(取自清單網址, 由 ensureBins 取得之檔推得)
         assert.strict.deepEqual(Object.keys(j.tools), ['syft', 'grype', 'osv-scanner', 'ex-sbom'])
@@ -58,6 +66,7 @@ describe('captureExSbom', function() {
     let pics = path.join(root, 'pics')
     let vuln = path.resolve('./test/fixtures/vuln.spdx.json') //semver 7.0.0(GHSA-c2qf-rxjj-qqgw)
     let clean = path.resolve('./test/fixtures/clean.spdx.json') //is-number 7.0.0
+    let cycle = path.resolve('./test/fixtures/cycle.spdx.json') //semver 7.0.0 + es-abstract ⇄ string.prototype.trim(has-symbols 自入度 0 走到循環)
     let quiet = () => {}
     let exe = null
 
@@ -187,16 +196,16 @@ describe('captureExSbom', function() {
             fs.mkdirSync(d, { recursive: true })
             fs.writeFileSync(path.join(d, 'x.txt'), 'x')
         }
-        //Windows 下行程之工作目錄無法刪除:以子行程停在其內模擬被占用
-        let holder = spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { cwd: locked, stdio: 'ignore' })
+        //Windows 下行程之工作目錄無法刪除:以子行程停在其內模擬被占用。待其確被持有才往下(不以延時同步, 見 test/tools/holdDir.mjs;
+        //清除邏輯本身之確定性測試見 unit-exsbom.test.mjs〈exsbom cleanStaleWork〉, 本案另驗經 captureExSbom 仍照常完成)
+        let holder = await holdDir(locked)
         let logs = []
         let r
         try {
             r = await captureExSbom(exe, clean, pics, (m) => logs.push(m), { workRoot: work })
         }
         finally {
-            holder.kill()
-            await new Promise((resolve) => holder.exitCode !== null ? resolve() : holder.once('exit', resolve))
+            await holder.stop()
         }
         assert.strict.deepEqual(names(r), [])
         assert.strict.ok(!fs.existsSync(stale))
@@ -207,8 +216,50 @@ describe('captureExSbom', function() {
 
     it('就緒後 ex-sbom 結束時立即中止,不以殘缺結果交付', async function() {
         let t0 = Date.now()
-        await assert.rejects(captureExSbom(exe, vuln, pics, quiet, { workRoot: work, onReady: (ex) => ex.child.kill() }), /意外結束/)
+        await assert.rejects(captureExSbom(exe, vuln, pics, quiet, { workRoot: work, onReady: (ex) => ex.child.kill() }), /意外結束\((離開碼|訊號) [^)]+\),本次截圖作廢/)
         assert.strict.ok(Date.now() - t0 < 60000)
+        assert.strict.ok(!fs.existsSync(work))
+    })
+
+    //建議w-scan-dep修正.md(Gitea #24)一建議 1(主控裁定 2):ex-sbom v0.2.0 對相依循環無限遞迴;上傳前剔除構成循環之關係,使含循環者能產出截圖,並回傳剔除者
+    it('含相依循環之 SBOM:上傳前剔除構成循環之關係,ex-sbom 不再意外結束而產出截圖,結果列出剔除之關係,原檔不動', async function() {
+        let text0 = fs.readFileSync(cycle, 'utf8')
+        let r = await captureExSbom(exe, cycle, pics, quiet, { workRoot: work })
+        assert.strict.ok(fs.existsSync(r.overviewShot), r.overviewShot)
+        assert.strict.ok(names(r).includes('semver@7.0.0'), names(r).join(','))
+        assert.strict.ok(r.summary.length >= 1) //拓撲各層摘要(ex-sbom 完成分析)
+        assert.strict.deepEqual(r.removedRelationships.map((x) => `${x.from} ${x.relationshipType} ${x.to}`), ['string.prototype.trim@1.2.11 DEPENDENCY_OF es-abstract@1.24.2'])
+        assert.strict.strictEqual(fs.readFileSync(cycle, 'utf8'), text0)
+        assert.strict.ok(!fs.existsSync(work))
+    })
+
+    it('SBOM 無法解析時於啟動 ex-sbom 前即拋錯(不啟動、不刪上次之截圖、工作子夾已刪)', async function() {
+        let bad = path.join(root, 'bad', 'syft.spdx.json')
+        fs.mkdirSync(path.dirname(bad), { recursive: true })
+        fs.writeFileSync(bad, '{ not json')
+        fs.mkdirSync(pics, { recursive: true })
+        fs.writeFileSync(path.join(pics, 'topology-overview.png'), 'old')
+        let logs = []
+        await assert.rejects(captureExSbom(exe, bad, pics, (m) => logs.push(m), { workRoot: work }), /無法讀取或解析 SBOM/)
+        assert.strict.ok(!logs.some((m) => m.includes('啟動服務')), logs.join('\n'))
+        assert.strict.strictEqual(fs.readFileSync(path.join(pics, 'topology-overview.png'), 'utf8'), 'old')
+        assert.strict.ok(!fs.existsSync(work))
+    })
+
+    it('無循環之 SBOM 不剔除任何關係(removedRelationships 為空陣列)', async function() {
+        let r = await captureExSbom(exe, clean, pics, quiet, { workRoot: work })
+        assert.strict.deepEqual(r.removedRelationships, [])
+    })
+
+    //建議w-scan-dep修正.md(Gitea #24)二(主控裁定 4):截圖期間意外結束時,錯誤訊息附 ex-sbom.log 之 fatal error 及其後數行(長度設上限)。
+    //以不剔除循環(opt.breakCycles: false)重現 ex-sbom 真實之 stack overflow
+    it('ex-sbom 於截圖期間因 stack overflow 結束:錯誤訊息含離開碼與 ex-sbom.log 之結束原因,長度有上限,工作子夾仍刪除', async function() {
+        let err = await captureExSbom(exe, cycle, pics, quiet, { workRoot: work, breakCycles: false }).then(() => null, (e) => e)
+        assert.strict.ok(err instanceof Error, '應以錯誤結束')
+        assert.strict.match(err.message, /於截圖期間意外結束\(離開碼 2\),本次截圖作廢;ex-sbom\.log 摘錄:\n/)
+        assert.strict.ok(err.message.includes('fatal error: stack overflow'), err.message)
+        assert.strict.ok(err.message.includes('getSpdxDependencyDepthMap'), err.message)
+        assert.strict.ok(err.message.length < 2000, String(err.message.length))
         assert.strict.ok(!fs.existsSync(work))
     })
 
