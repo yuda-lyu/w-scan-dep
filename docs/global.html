@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#runTool">runTool</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
     
 </nav>
 
@@ -332,6 +332,462 @@ test()
 
     
 
+    <h4 class="name" id="pickRegistrySettings"><span class="type-signature"></span>pickRegistrySettings<span class="signature">(conf)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>自 npm config list --json 之輸出物件(npm 生效值)挑出倉庫位址類設定,其餘一律丟棄</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="npmRegistry.mjs.html">npmRegistry.mjs</a>, <a href="npmRegistry.mjs.html#line56">line 56</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>conf</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>npm config list --json 解析後之物件</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>entries 依 registry 在前、scope 依鍵名排序;strippedAuth 為網址內嵌帳密被去除之鍵</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="readCallerRegistry"><span class="type-signature"></span>readCallerRegistry<span class="signature">(callerDir, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise.&lt;{entries: Array.&lt;{key: string, url: string}>, strippedAuth: Array.&lt;string>}>}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>於呼叫端專案目錄取得 npm 之生效倉庫設定(registry 與 @scope:registry)</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="npmRegistry.mjs.html">npmRegistry.mjs</a>, <a href="npmRegistry.mjs.html#line77">line 77</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>callerDir</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last"><p>呼叫端專案目錄(掃描目標 package.json 所在處)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last"><p>選項</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>timeoutMs</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Number</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last"><p>時限毫秒,預設 60000</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>env</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+
+            <td class="description last"><p>執行 npm 用之環境變數,預設 process.env</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>見 pickRegistrySettings</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Promise.&lt;{entries: Array.&lt;{key: string, url: string}>, strippedAuth: Array.&lt;string>}></span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
     <h4 class="name" id="runTool"><span class="type-signature"></span>runTool<span class="signature">()</span><span class="type-signature"></span></h4>
 
     
@@ -345,13 +801,15 @@ test()
     <dd class="tag-description"><ul class="dummy"><li><p>於 timeoutMs 內執行 exe(不經 shell),收集其 stdout/stderr(utf8)。
 逾時即樹狀結束並拋出「<label> 逾時(超過 …未完成),已結束 <label> 子行程樹;可設環境變數 <envName>(秒)調整時限」;
 無法啟動或輸出超過 maxBuffer 位元組拋「<label> 執行錯誤: …」。非 0 離開碼不拋錯,交呼叫端判斷(osv-scanner 有漏洞時回非 0)。
-以 exit 判定結束(已結束者不再 taskkill,避免對已被重用之 PID 動手),其後最多再等 STREAM_GRACE_MS 讓輸出串流收尾</p></li></ul></dd>
+以 exit 判定結束(已結束者不再 taskkill,避免對已被重用之 PID 動手),其後最多再等 STREAM_GRACE_MS 讓輸出串流收尾
+cwd 為子行程工作目錄(未給用呼叫端之 cwd);shell 為 true 時 exe 為整條指令字串、args 須為空陣列(npm 在 Windows 為 npm.cmd,須經 shell 啟動;
+有 args 時 Node 24 對 shell:true 發出 DEP0190 警告),此時子行程為 cmd.exe,逾時之樹狀結束涵蓋其下之 npm</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="proc.mjs.html">proc.mjs</a>, <a href="proc.mjs.html#line83">line 83</a>
+        <a href="proc.mjs.html">proc.mjs</a>, <a href="proc.mjs.html#line85">line 85</a>
     </li></ul></dd>
     
 
@@ -416,6 +874,189 @@ test()
 
 
         
+            
+
+    
+
+    <h4 class="name" id="writeRegistryNpmrc"><span class="type-signature"></span>writeRegistryNpmrc<span class="signature">(testDir, entries)</span><span class="type-signature"> &rarr; {Promise.&lt;(String|null)>}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>寫入 testDir/.npmrc。testDir 為本工具之隔離資料夾,其 .npmrc 一律由本函式決定:先刪除既有者(上次執行或他處留下者,
+使結果只取決於呼叫端專案之設定),entries 非空再寫入;回驗刪除與寫入。</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="npmRegistry.mjs.html">npmRegistry.mjs</a>, <a href="npmRegistry.mjs.html#line130">line 130</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>testDir</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>隔離安裝資料夾(fdOut/test)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>entries</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array.&lt;{key: string, url: string}></span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>pickRegistrySettings 之 entries</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>寫入之檔案路徑,entries 為空時回傳 null</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Promise.&lt;(String|null)></span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
     
 
     
@@ -435,7 +1076,7 @@ test()
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 16:15:24 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 18:32:05 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

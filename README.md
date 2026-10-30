@@ -57,6 +57,8 @@ test()
 
 > npm install 時限：全新安裝相依之 `npm install` 預設 20 分鐘未完成即結束整個安裝子行程樹並 reject(訊息含「npm install 逾時」)；以環境變數 `W_NPM_INSTALL_TIMEOUT=<秒>` 調整(正數，可含小數，至多 2147483；值不合法時於任何下載與寫入前 reject)。
 
+> 隔離安裝沿用呼叫端專案之倉庫設定：隔離安裝只把 `package.json` 複製到 `fdOut/test` 再 `npm install`，而 npm 之專案層 `.npmrc` 取自安裝目錄，讀不到呼叫端專案層之 `.npmrc`；自有套件只發布於私有倉庫、專案方常把 `registry=` 只寫在專案層時，隔離安裝會改由使用者層或預設倉庫解析，自有套件拿到舊版或 `ETARGET`，掃描結果與專案實際安裝不符。故 `WScanDep` 於**呼叫端專案目錄**(`fpIn` 所在處)執行 `npm config list --json`，取 npm 之生效 `registry` 與各 `@scope:registry`(專案層、使用者層、全域層、環境變數合併後者)，寫入 `fdOut/test/.npmrc`(每次執行重寫；不改呼叫端之任何設定檔與 `process.env`)。**只帶倉庫位址**：不帶 `include`、`production`、`dev`、`also`、`omit` 等安裝集合設定(掃描範圍仍為 `dependencies`，上述保護不變)，不帶認證值(`_authToken`、`_auth`、`username`、`_password`；認證依主機鍵存於使用者層者，npm 本來就讀得到)，`cafile`、`strict-ssl`、代理等亦不帶。取得生效設定失敗(`npm config list` 逾時、離開碼非 0、輸出非 JSON、無法啟動)即 reject、不退回預設倉庫(以免掃描結果與專案實際安裝不符)，錯誤訊息只寫原因、不含 npm 之輸出與設定值(成功時 log 列出沿用之倉庫位址，已去除網址內嵌之帳密)；時限預設 60 秒，以環境變數 `W_NPM_CONFIG_TIMEOUT=<秒>` 調整(正數，可含小數，至多 2147483；值不合法時於任何下載與寫入前 reject)。**限制**：registry 網址內嵌帳密(`http://user:pass@host/`)時 npm 視為受保護而不列出，`WScanDep` 無從得知位址而 reject(請改以 `//主機/:_authToken` 等依主機鍵設定認證)；內嵌帳密之 `@scope:registry` 亦被 npm 隱藏而無法辨識，不會被沿用。
+
 > 掃描工具時限：syft、grype、osv-scanner 亦各有**單次執行**之時限，逾時即結束該工具之整個子行程樹並 reject(訊息含「逾時」與工具名，如 `syft 逾時(超過 10 分鐘未完成),已結束 syft 子行程樹;可設環境變數 W_SYFT_TIMEOUT(秒)調整時限`；此時不寫出 `result.json`、`result.md`，其後之工具不啟動)。以環境變數各自調整(秒，正數，可含小數，至多 2147483；值不合法時於任何下載與寫入前 reject)：
 >
 > | 工具 | 環境變數 | 預設 | 備註 |
@@ -96,12 +98,18 @@ test()
 
 ## Breaking changes
 
+### 隔離安裝沿用呼叫端專案之倉庫設定
+
+- **`fdOut/test/.npmrc` 由本套件決定**：每次執行先刪除既有者(上次或他處留下者)，再寫入呼叫端專案生效之 `registry` 與 `@scope:registry`(只有倉庫位址，不含認證值與其他設定)；呼叫端專案目錄與使用者層、全域層之 npm 設定檔不被改動。
+- **新增失敗情形**：`npm config list --json`(於 `fpIn` 所在資料夾執行)逾時、離開碼非 0、輸出非 JSON、無法啟動，或 npm 未列出 `registry`(`.npmrc` 之 registry 網址內嵌帳密時)，`WScanDep` reject `無法取得呼叫端專案(…)生效之 npm 倉庫設定,已中止(…)`，不進入安裝與掃描，`fdOut` 不被建立。新環境變數 `W_NPM_CONFIG_TIMEOUT`(秒，預設 60)。
+- **呼叫端影響**：專案方把 `registry=`／`@scope:registry=` 只寫在專案層 `.npmrc` 者，隔離安裝由其指定之倉庫解析，掃描所得之套件版本與專案實際安裝一致(原本會改由使用者層或預設倉庫解析)。未在專案層設定者，結果與原本相同。
+
 ### 掃描範圍限定 dependencies(Gitea #27)
 
 - **隔離安裝改為 `npm install --omit=dev`**(其餘旗標 `--no-audit --no-fund` 與 `W_NPM_INSTALL_TIMEOUT` 時限不變)：`fdOut/test` 只裝正式相依樹(含正式套件之對等相依，以及同時為正式套件之相依者)，`devDependencies` 及其所附之執行檔不落地、不入 SBOM。原本 syft 之 npm 編目器預設不收 dev 套件，但 PE／Go binary 編目器掃描安裝所得之檔案，不分正式或開發用，故開發用套件所附之執行檔(如 vite 帶入之 `@esbuild/win32-x64/esbuild.exe` 及其 Go 標準庫)仍被掃入，範圍不一致；現已一致。
 - **呼叫端影響**：①**漏洞標註數可能下降**(開發工具之執行檔不再列入；實測一個含 vite、clipboardy 為 `devDependencies` 之專案，grype 由 62 筆〔Go 標準庫 59 筆＋sharp 3 筆〕降為 3 筆，osv-scanner 由 2 個套件降為 1 個；SBOM 之 npm 套件清單〔`javascript-lock-cataloger` 收錄者〕57 項不變，`vue` 因同為 `vue-router` 之對等相依而仍在)；②**`updateList` 只剩正式相依樹**(`result.json` 之 `updateList` 與 `待更新套件.md`)：風險套件之引入路徑取自 `fdOut/test` 之 `npm ls`，該處已無開發用套件，故開發工具不再出現在引入路徑中；③`fdOut/test/node_modules` 不再含開發用套件(安裝較快、佔用較少)；④報告產線若自行依「執行檔所在之 npm 套件是否在 SBOM 之 npm 套件清單」排除開發用執行檔(呼叫端補洞)，可移除該補洞。
 - **`result.json` 新增頂層欄位 `scope`**(值 `'dependencies'`，置於 `outputDir` 之後；頂層鍵依序為 `date`、`source`、`outputDir`、`scope`、`tools`、`osv`、`grype`、`exsbom`、`updateList`)；`result.md` 之〈掃描資訊〉與 `待更新套件.md` 之標頭新增「掃描範圍」一行。
-- **範圍不受呼叫端 npm 設定影響，裝入 dev 套件即拋錯**：npm 以 `include` 優先於 `omit`，呼叫端環境若有 `npm_config_include=dev`(或 `npm_config_production=false`、`npm_config_dev=true`、`npm_config_also=dev`)，單靠 `--omit=dev` 會被抵消(npm 12.1.0 實測)。故隔離安裝的子行程環境移除這四項(前綴不分大小寫；只動子行程副本)；呼叫端專案自身的 `.npmrc` 不會被讀到(npm 專案設定檔只取安裝目錄 `fdOut/test` 處，不往上層找)；使用者層(`~/.npmrc`)、全域層或 `fdOut/test/.npmrc` 若設 `include[]=dev` 等同類設定，環境變數無從移除，改由安裝後驗證攔下：依 `node_modules/.package-lock.json` 與 `package-lock.json` 之 `dev` 標記確認無 dev 套件落地，有即拋錯(訊息寫明套件名、原因與排除方式〔`npm config list` 查出並移除該設定〕)，不輸出任何 `result.*`。
+- **範圍不受呼叫端 npm 設定影響，裝入 dev 套件即拋錯**：npm 以 `include` 優先於 `omit`，呼叫端環境若有 `npm_config_include=dev`(或 `npm_config_production=false`、`npm_config_dev=true`、`npm_config_also=dev`)，單靠 `--omit=dev` 會被抵消(npm 12.1.0 實測)。故隔離安裝的子行程環境移除這四項(前綴不分大小寫；只動子行程副本)；呼叫端專案自身的 `.npmrc` 之 `include` 等設定不會被讀到(npm 專案設定檔只取安裝目錄 `fdOut/test` 處，不往上層找；隔離安裝只沿用其中之倉庫位址，見上方〈隔離安裝沿用呼叫端專案之倉庫設定〉)；使用者層(`~/.npmrc`)、全域層或 `fdOut/test/.npmrc` 若設 `include[]=dev` 等同類設定，環境變數無從移除，改由安裝後驗證攔下：依 `node_modules/.package-lock.json` 與 `package-lock.json` 之 `dev` 標記確認無 dev 套件落地，有即拋錯(訊息寫明套件名、原因與排除方式〔`npm config list` 查出並移除該設定〕)，不輸出任何 `result.*`。
 - 不提供「掃描開發工具」之開關(使用者明示不需要；需要時另議)。`fdOut/test` 之 `package-lock.json` 仍含開發用套件之解析結果(npm 寫出完整相依樹，其中開發用者標 `"dev": true`，syft 預設不收)，但 `node_modules` 不含。
 
 ### ex-sbom 截圖失敗之辨識、npm install 與掃描工具時限

@@ -79,11 +79,13 @@ export const killNote = (r, what) => (r.gone && r.killStatus === 0
  * 逾時即樹狀結束並拋出「<label> 逾時(超過 …未完成),已結束 <label> 子行程樹;可設環境變數 <envName>(秒)調整時限」;
  * 無法啟動或輸出超過 maxBuffer 位元組拋「<label> 執行錯誤: …」。非 0 離開碼不拋錯,交呼叫端判斷(osv-scanner 有漏洞時回非 0)。
  * 以 exit 判定結束(已結束者不再 taskkill,避免對已被重用之 PID 動手),其後最多再等 STREAM_GRACE_MS 讓輸出串流收尾
+ * cwd 為子行程工作目錄(未給用呼叫端之 cwd);shell 為 true 時 exe 為整條指令字串、args 須為空陣列(npm 在 Windows 為 npm.cmd,須經 shell 啟動;
+ * 有 args 時 Node 24 對 shell:true 發出 DEP0190 警告),此時子行程為 cmd.exe,逾時之樹狀結束涵蓋其下之 npm
  */
-export async function runTool(exe, args, { label, timeoutMs, envName, env, maxBuffer = 64 * 1024 * 1024 }) {
+export async function runTool(exe, args, { label, timeoutMs, envName, env, cwd, shell, maxBuffer = 64 * 1024 * 1024 }) {
     let child
     try {
-        child = spawn(exe, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+        child = spawn(exe, args, { env, cwd, shell, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     }
     catch (e) {
         throw new Error(`${label} 執行錯誤: ${e.message}`)

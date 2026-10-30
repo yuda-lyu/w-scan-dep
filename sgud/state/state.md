@@ -21,6 +21,7 @@
 | npm install 時限(`W_NPM_INSTALL_TIMEOUT`,預設 1200 秒,逾時樹狀結束) | 完成(同上) | R-NPM-TIMEOUT-01 | `test/api-npmInstall.test.mjs`、`test/unit-npmInstallTimeout.test.mjs`、`test/api-wsdEntry.test.mjs` |
 | syft／grype／osv-scanner 單次時限(`W_SYFT_TIMEOUT` 3600 秒、`W_GRYPE_TIMEOUT` 1800 秒、`W_OSV_SCANNER_TIMEOUT` 600 秒,逾時樹狀結束;三工具改非同步,共用 `src/proc.mjs`) | 完成(2026-10-30 run02,Gitea #24 同類) | R-SCAN-TIMEOUT-01 | `test/api-scanTimeout.test.mjs`、`test/unit-scanTimeout.test.mjs`、`test/unit-proc.test.mjs`、`test/api-wsdEntry.test.mjs`、替身 `test/tools/hangTool.mjs` |
 | 掃描範圍只算 dependencies(隔離安裝 `npm install --omit=dev`;`result.json` 之 `scope: 'dependencies'`;`result.md`、`待更新套件.md` 寫明範圍;`updateList` 只剩正式相依樹;README〈掃描範圍〉與〈Breaking changes〉、`WScanDep` 之 JSDoc) | 完成(2026-10-30,Gitea #27,使用者裁定;不提供掃描開發工具之開關;run02 起範圍不受呼叫端 npm 設定影響:子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯) | R-SCAN-SCOPE-01 | `test/api-installScope.test.mjs`、`test/api-installScopeEnv.test.mjs`、`test/unit-installGuard.test.mjs`、`test/api-scanScope.test.mjs`(連網＋真 syft)、`test/api-wsdEntry.test.mjs`(指令、`scope`、整合案)、`test/unit-report.test.mjs`、`test/WScanDep.test.mjs`「test」、替身 `test/tools/fakeNpmRegistry.mjs`、`test/tools/scopeFixture.mjs` |
+| 隔離安裝沿用呼叫端專案之倉庫位址設定(`src/npmRegistry.mjs`;`WScanDep` 於 `fpIn` 所在資料夾取 `npm config list --json` 之生效 `registry`／`@scope:registry`,寫入 `fdOut/test/.npmrc`;環境變數 `W_NPM_CONFIG_TIMEOUT` 預設 60 秒;README〈隔離安裝沿用呼叫端專案之倉庫設定〉與〈Breaking changes〉) | 完成(2026-10-30,任務 20261030174519 run01,主控提出之 Gitea #27 run02 範圍外發現):只帶位址,不帶 include 等安裝集合設定與認證值;取得失敗(逾時、離開碼非 0、輸出非 JSON、無法啟動、npm 未列出 registry)即拋錯,不進入安裝、`fdOut` 不被建立;`result.*` 欄位不變 | R-NPM-REGISTRY-01 | `test/unit-npmRegistry.test.mjs`、`test/api-npmRegistry.test.mjs`(真實 npm＋假 registry 埠 8971~8973)、`test/api-wsdEntry.test.mjs`〈the registry settings of the calling project〉(埠 8975~8977)、替身 `test/tools/fakeNpm/`(`npm.cmd`＋`fakeNpm.mjs`) |
 | 重跑清除上次安裝殘留 | 完成(未動) | — | `test/unit-clearNpmState.test.mjs` |
 | osv-scanner 執行與離開碼 | 完成(2026-10-30 改經 `runTool` 非同步執行,離開碼判讀不變) | R-SCAN-TIMEOUT-01 規則 5 | `test/unit-runOsv.test.mjs` |
 
@@ -38,9 +39,12 @@
 - 身分確認為同步呼叫、本 OS 上每次約 1 秒(阻塞事件迴圈),每次擷取約 3 次;wsemi 預設每個子指令逾時 10 秒,機器極忙致 PowerShell 逾時時查詢失敗 → 拋錯 → 只作廢截圖(fail-closed,未放寬時限).
 - 已知缺口(R-EXSBOM-PORT-01):`finally` 之釋放確認 log 訊息無測試;回傳前重驗之「查詢失敗」分支無直接測試.
 - 已知缺口(R-SCAN-SCOPE-01):①`api-scanScope.test.mjs` 需連 npm registry(取 `npm_config_registry` 所指者)與真 syft,離線無法跑(其餘新案離線);②(run02 已處理,規則 7)呼叫端 npm 設定抵消 `--omit=dev`:環境變數 `include=dev`／`production=false`／`dev=true`／`also=dev` 由子行程環境副本移除,設定檔層(使用者層、全域層、安裝目錄內)由安裝後驗證拋錯;未實測之局限:`install-strategy=linked` 等改變 `node_modules` 版面之設定、`optionalDependencies`／根專案 `peerDependencies`／workspaces 無夾具;③cgsmdb 專案(`E:` 槽)本機不存在,真實驗收以同形態替身 `package.json` 進行,提出端之三個專案需其於新版發布後自行重掃確認(建議檔〈驗證建議〉1~3).
+- 已知缺口(R-NPM-REGISTRY-01):①registry 網址內嵌帳密時 npm 視為受保護而不列出,`WScanDep` 無從得知位址而拋錯(請改以 `//主機/:_authToken` 依主機鍵設定認證);內嵌帳密之 `@scope:registry` 缺席與未設無從區分,不會被沿用;②`cafile`、`strict-ssl`、代理等 TLS／代理設定不帶(裁定 3 只帶位址;私有倉庫須專案層才有之自簽憑證設定時,隔離安裝連線失敗);③workspaces(monorepo 成員)無夾具,未驗證;④`api-wsdEntry` 既有案(攔截 `spawn`、`npmMode: 'ok'`)現會真的執行一次 `npm config list --json`(放行,不計入呼叫序列),結果取決於開發機之使用者層設定,僅寫入各案之暫存夾.
 - 「清除前次殘留之工作子夾」案之時序假設已修(2026-10-30 run02):占用者改由 `test/tools/holdDir.mjs` 等確被持有才往下;清除邏輯另有不經 ex-sbom 之確定性單元測試(`cleanStaleWork` 已匯出).
 
 ## 最近一次驗證
+
+2026-10-30(任務 20261030174519 run01,隔離安裝沿用呼叫端專案之倉庫位址設定):**全套 `npm test`(`--lock`)235 通過/0 失敗**(兩次,約 1 分 25~35 秒;run02 之 178 + 新增 57 案:`unit-npmRegistry` 25、`api-npmRegistry` 22、`api-wsdEntry` 10);修前紅(`WScanDep` 不查詢、不寫 `.npmrc` = 修前行為)`api-wsdEntry` 新案 9 紅(`npm install 失敗(exit 1)`:由使用者層之 B 解析);變異 M0~M17 共 18 個皆被抓到(對照組全綠);eslint 變更檔 0 error.報告:`C:\opensrcOper\dnow\20261030174519\agent-out\run01-修正報告.md`.
 
 2026-10-30(任務 20261030151214 run02,Gitea #27 之 §9 待裁示:範圍不受呼叫端 npm 設定影響):**全套 `npm test`(`--lock`)178 通過/0 失敗**(約 1 分 44 秒;run01 之 154 + 新增 24 案:`unit-installGuard` 11、`api-installScopeEnv` 11、`api-wsdEntry` 2);修前紅(= run01 之碼,子行程不傳環境副本且無安裝後驗證)12 案紅;變異 M0~M14 共 15 個皆被抓到;npm 設定探測 22 案(`npm_config_include`／`production`／`dev`／`also` 及使用者層、全域層、安裝目錄內設定檔會抵消 `--omit=dev`,呼叫端專案 `.npmrc` 不會被讀到);eslint 變更行 0 error(`install.mjs:137` 為既有舊問題).報告:`C:\opensrcOper\dnow\20261030151214\agent-out\run02-修正報告.md`.
 

@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#runTool">runTool</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
     
 </nav>
 
@@ -65,9 +65,12 @@
 //  devDependencies 及其所附之執行檔不落地、不入 SBOM;待更新清單(updateList)隨之只剩正式相依樹;result.json 加 scope、result.md 寫明範圍)
 // (2026-10-30 run02,同上之同類: 範圍不受呼叫端 npm 設定影響——隔離安裝之子行程環境移除會抵消 --omit=dev 之 npm_config_include／production／dev／also,
 //  安裝後驗證隔離資料夾內無 dev 套件,有即拋錯〔fail-closed,不輸出 scope: 'dependencies'〕,見 install.mjs)
+// (2026-10-30 修正,主控裁定: 隔離安裝沿用呼叫端專案之倉庫設定——npm 之專案層 .npmrc 取自安裝目錄而讀不到呼叫端專案層者,
+//  故於呼叫端專案目錄取 npm 之生效 registry 與 @scope:registry,寫入 fdOut/test/.npmrc;只帶位址,不帶 include 等安裝集合設定與認證值;
+//  取得失敗即拋錯,見 npmRegistry.mjs)
 // 流程:
 //   0) 經 ensureBins 取得 syft/grype/osv-scanner/ex-sbom(清單為 bin/manifest.json,校驗 SHA-256 與大小;取不到時即中止,不待 npm install 後才發現)
-//   1) 清除 fdOut/test 上次安裝殘留,複製 package.json 並 npm install --omit=dev(只裝正式相依樹;產出 package-lock.json 與 node_modules;逾時即中止;裝後驗證無 dev 套件,有即中止)
+//   1) 清除 fdOut/test 上次安裝殘留,複製 package.json,寫入沿用呼叫端專案倉庫位址之 .npmrc,並 npm install --omit=dev(只裝正式相依樹;產出 package-lock.json 與 node_modules;逾時即中止;裝後驗證無 dev 套件,有即中止)
 //   2) 以上述工具掃描 fdOut/test
 //   3) ex-sbom 各漏洞套件截圖存 fdOut/pics/*.png(失敗時只作廢截圖、刪除 pics,續寫其餘產出)
 //   4) 檢測數據(含截圖相對路徑 ./pics、截圖成敗與原因、結果文字)寫入 fdOut/result.json
@@ -78,6 +81,7 @@ import { mkdir, copyFile, writeFile, access, stat, rm } from 'node:fs/promises'
 import { join, basename, dirname, resolve } from 'node:path'
 import { resolveLayout, assertToolsOutside } from './layout.mjs'
 import { clearNpmState, NPM_STATE, npmInstall, npmInstallTimeoutMs } from './install.mjs'
+import { npmConfigTimeoutMs, readCallerRegistry, writeRegistryNpmrc, describeRegistry, NPM_CONFIG_TIMEOUT_ENV } from './npmRegistry.mjs'
 import ensureBins from './ensureBins.mjs'
 import { readToolVersions } from './toolVersions.mjs'
 import { runScan, scanTimeoutsMs, SCAN_TIMEOUTS } from './scan.mjs'
@@ -131,6 +135,8 @@ function serializeUpdateList(ul) {
  * 經ensureBins取得syft、grype、osv-scanner、ex-sbom(依bin/manifest.json校驗SHA-256與大小，首次使用時下載並存於快取)，掃描指定專案之依賴套件，並將檢測數據、markdown報告、連鎖更新清單與ex-sbom各漏洞套件截圖輸出至指定資料夾，僅支援Windows
  *
  * 掃描範圍只算dependencies：掃描對象為網頁前後端服務或編譯出之應用程式(app)，只有dependencies所提供者(程式碼，以及這些套件所附之執行檔)會被服務或app實際使用，才算數；devDependencies之開發與建置工具不是服務，也不會包入app執行，不在範圍(其風險應由執行機自行掃描或以防毒軟體處理)。作法為隔離安裝(fdOut/test)只裝正式相依樹(npm install --omit=dev)：devDependencies及其所附之執行檔(如vite帶入之esbuild.exe)不落地、不入SBOM，syft、grype、osv-scanner、ex-sbom與待更新套件清單(updateList)皆只及正式相依樹；同時為正式套件之相依者(如vue為正式套件之對等相依，即使package.json亦列於devDependencies)照收。不提供掃描開發工具之開關。result.json之scope為'dependencies'，result.md亦寫明範圍。此範圍不受呼叫端npm設定影響(隔離安裝之子行程環境移除會使npm裝入dev套件之npm_config_include、npm_config_production、npm_config_dev、npm_config_also，不改呼叫端之process.env)，安裝後若隔離資料夾內仍有dev套件(如使用者層或全域.npmrc設了include=dev)即reject，不輸出result.*。
+ *
+ * 隔離安裝沿用呼叫端專案之倉庫設定：npm之專案層.npmrc取自安裝目錄(fdOut/test)，讀不到呼叫端專案層之.npmrc，專案方常把registry=只寫在專案層(自有套件只發布於私有倉庫)，隔離安裝若不沿用，會改由使用者層或預設倉庫解析而與專案實際安裝不符。故於呼叫端專案目錄(fpIn所在處)執行npm config list --json取npm之生效值(專案層、使用者層、全域層、環境變數合併後者)，只挑registry與各@scope:registry，寫入fdOut/test/.npmrc(該檔每次執行重寫，未取得任何倉庫設定時刪除)，不改呼叫端之任何設定檔與process.env。只帶倉庫位址：不帶include、production、dev、also、omit等安裝集合設定(掃描範圍仍為dependencies)，不帶認證值(_authToken、_auth、username、_password，網址內嵌之帳密亦去除；認證依主機鍵存於使用者層者npm本來就讀得到)，TLS相關設定(cafile、strict-ssl)與代理設定亦不帶。取得生效設定失敗(逾時、離開碼非0、輸出非JSON、無法啟動)即reject，不改用預設倉庫(以免掃描結果與專案實際安裝不符)，錯誤訊息只寫原因、不含npm之輸出與設定值(成功時log列出沿用之倉庫位址，已去除網址內嵌之帳密)；時限由環境變數W_NPM_CONFIG_TIMEOUT(秒，正數，至多2147483)指定，預設60，值不為正數時於任何下載與寫入前reject。
  *
  * 外部執行檔不含於npm包，快取預設為套件根之bin-cache/，可由環境變數W_BIN_CACHE改位置(多個專案共用同一份)；W_BIN_MIRROR指定離線鏡像，W_BIN_OFFLINE=1時不連網；部署前可預先呼叫WScanDep.ensureBins()，見README〈外部執行檔〉。
  * ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同node程序、不同fdOut執行
@@ -186,6 +192,7 @@ async function WScanDep(fpIn, fdOut, opt) {
 
     // npm install 與 syft/grype/osv-scanner 之時限先行驗證:格式錯誤於任何下載與寫入前即拋錯
     const installTimeoutMs = npmInstallTimeoutMs()
+    const configTimeoutMs = npmConfigTimeoutMs()
     const scanTimeouts = scanTimeoutsMs()
 
     const log = (m) => console.log(m)
@@ -217,6 +224,13 @@ async function WScanDep(fpIn, fdOut, opt) {
     log(`  工具快取：${dirname(dirname(bins['syft.exe']))}`)
     for (const [k, v] of Object.entries(tools)) log(`  ${k} ${v.version}：${v.exePath}`)
 
+    // 呼叫端專案(package.json 所在處)生效之 npm 倉庫設定:隔離安裝讀不到其專案層 .npmrc,須沿用(見 npmRegistry.mjs);
+    // 先於任何寫入取得,失敗即拋錯(不留下 fdOut)
+    const callerDir = dirname(pkgJson)
+    log(`[npm] 讀取呼叫端專案(${callerDir})生效之倉庫設定(npm config list --json,時限 ${configTimeoutMs / 1000} 秒,環境變數 ${NPM_CONFIG_TIMEOUT_ENV} 可調)...`)
+    const registry = await readCallerRegistry(callerDir, { timeoutMs: configTimeoutMs })
+    if (registry.strippedAuth.length > 0) log(`[npm] 已去除 ${registry.strippedAuth.join('、')} 網址內嵌之帳密(認證值不帶入隔離安裝;認證依主機鍵存於使用者層者 npm 讀得到)`)
+
     await mkdir(outDir, { recursive: true })
 
     // 1) 複製 package.json 至 fdOut/test 並全新安裝(不複製 lock, 由 npm 重新解析產出 package-lock.json 與 node_modules)
@@ -224,6 +238,10 @@ async function WScanDep(fpIn, fdOut, opt) {
     log(`[npm] 清除 test 上次安裝殘留(${NPM_STATE.join('、')})...`)
     await clearNpmState(testDir)
     await copyFile(pkgJson, join(testDir, 'package.json'))
+    await writeRegistryNpmrc(testDir, registry.entries)
+    log(registry.entries.length > 0
+        ? `[npm] 隔離安裝沿用呼叫端專案之倉庫設定(僅位址,不含認證):${describeRegistry(registry.entries)}`
+        : '[npm] 呼叫端專案未取得倉庫設定,隔離安裝用 npm 預設')
     log(`[npm] 於 test 全新安裝正式相依樹(npm install --omit=dev,時限 ${installTimeoutMs / 1000} 秒,環境變數 W_NPM_INSTALL_TIMEOUT 可調)...`)
     await npmInstall(testDir, { timeoutMs: installTimeoutMs })
     const scanTarget = testDir
@@ -312,7 +330,7 @@ export default WScanDep
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 16:15:24 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Oct 30 2026 18:32:05 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

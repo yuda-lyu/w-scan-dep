@@ -90,6 +90,7 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
     //攔截
     let netCalls = []
     let calls = []
+    let cfgCalls = []
     let fetchBak = null
     let spawnBak = null
     let spawnSyncBak = null
@@ -124,6 +125,12 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         }
         cp.spawn = (cmd, ...rest) => {
             let c = String(cmd)
+            //取呼叫端專案生效之 npm 倉庫設定(src/npmRegistry.mjs): 照常執行(真實 npm, 或 PATH 前端之替身 npm), 另記於 cfgCalls, 不計入 calls(呼叫序列斷言不變)
+            if (/^npm config /.test(c)) {
+                let opt = rest.find((v) => v && !Array.isArray(v) && typeof v === 'object')
+                cfgCalls.push({ cmd: c, cwd: opt && opt.cwd })
+                return spawnBak(cmd, ...rest)
+            }
             if (/^npm install/.test(c)) {
                 let opt = rest.find((v) => v && !Array.isArray(v) && typeof v === 'object')
                 calls.push({ kind: 'npm', cmd: c, cwd: opt && opt.cwd, env: opt && opt.env, callerInclude: process.env.npm_config_include })
@@ -159,6 +166,7 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
     beforeEach(function() {
         netCalls = []
         calls = []
+        cfgCalls = []
         exMode = 'throw'
         npmMode = 'ok'
         hangName = null
@@ -519,6 +527,223 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         for (let f of ['result.json', 'result.md', '待更新套件.md']) {
             assert.strict.equal(fs.existsSync(path.join(out, f)), false, `${f} 不應被寫出`)
         }
+    })
+
+    //主控裁定(隔離安裝沿用呼叫端專案之倉庫設定, 規則帳本 R-NPM-REGISTRY-01): 隔離安裝(fdOut/test)只複製 package.json, npm 之專案層 .npmrc 取自安裝目錄,
+    //讀不到呼叫端專案層之 .npmrc。以下以真實 npm 對本機假 registry(A 埠 8975、B 埠 8976、scope 專用 S 埠 8977; 夾具 test/tools/scopeFixture.mjs)走 WScanDep 全流程(掃描工具為替身);
+    //使用者層與全域設定檔以 npm_config_userconfig／globalconfig 指向本案暫存夾, npm_config_registry 清除, 不動使用者之 ~/.npmrc;
+    //取得失敗各形態以替身 npm(test/tools/fakeNpm/, 置於 PATH 前端)模擬。npm 本身之輸出(stdio 繼承)不在 console 攔截範圍
+    describe(`the registry settings of the calling project (R-NPM-REGISTRY-01)`, function() {
+        let ports = { A: 8975, B: 8976, S: 8977 }
+        let regs = {}
+        let rseq = 0
+        let emptyGlobal = ''
+        let fakeNpmDir = path.resolve('./test/tools/fakeNpm')
+        let pkgScoped = { ...scopeProject, dependencies: { ...scopeProject.dependencies, '@acme/lib': '1.0.0' } }
+        let SEC = { projToken: 'PROJ-SECRET-TOKEN-91f3', projAuth: 'PROJ-SECRET-AUTH-77aa', projUser: 'proj-secret-user-5c2d', projPass: 'proj-secret-pass-0b8e', userToken: 'USER-SECRET-TOKEN-4e19', urlUser: 'leakuser', urlPass: 'leakpass', fakeNpm: 'FAKE-NPM-SECRET-d41d8cd9' }
+        let b64 = (s) => Buffer.from(s).toString('base64')
+        let secrets = Object.values(SEC).concat([b64(SEC.projAuth), b64(SEC.projPass)])
+        let leaks = (text) => secrets.filter((v) => text.includes(v))
+
+        let wr = (f, text) => {
+            fs.mkdirSync(path.dirname(f), { recursive: true })
+            fs.writeFileSync(f, text)
+            return f
+        }
+        let pathWith = (dir) => {
+            let k = Object.keys(process.env).find((x) => x.toLowerCase() === 'path') || 'PATH'
+            return { [k]: dir + path.delimiter + (process.env[k] || '') }
+        }
+        let listFiles = (d) => fs.readdirSync(d, { recursive: true, withFileTypes: true }).filter((v) => v.isFile()).map((v) => path.join(v.parentPath, v.name))
+        let installedNames = (d) => fs.readdirSync(d).filter((n) => !n.startsWith('.')).sort()
+
+        //呼叫端專案(package.json 與專案層 .npmrc)、使用者層設定檔與一次執行所需之環境
+        let setup = (pkg, projRc, userRc) => {
+            let n = ++rseq
+            let prj = wr(path.join(fdt, `prj-r${n}`, 'package.json'), JSON.stringify(pkg))
+            if (projRc !== null) wr(path.join(fdt, `prj-r${n}`, '.npmrc'), projRc)
+            return {
+                prj,
+                out: path.join(fdt, `out-r${n}`),
+                env: {
+                    W_BIN_CACHE: path.join(fdt, `cache-r${n}`),
+                    W_BIN_MIRROR: mirror,
+                    W_BIN_OFFLINE: '1',
+                    npm_config_registry: undefined,
+                    npm_config_userconfig: wr(path.join(fdt, `user-r${n}`, '.npmrc'), userRc),
+                    npm_config_globalconfig: emptyGlobal,
+                    npm_config_cache: path.join(fdt, `npm-cache-r${n}`),
+                    npm_config_update_notifier: 'false',
+                },
+            }
+        }
+        //執行並攔截 console 輸出(log、錯誤訊息之認證值斷言用); 回傳 { r, err, logs }
+        let run = async (c, extraEnv = {}) => {
+            let logs = []
+            let bak = [console.log, console.error, console.warn]
+            console.log = console.error = console.warn = (...a) => {
+                logs.push(a.map(String).join(' '))
+            }
+            let r = null
+            let err = null
+            try {
+                r = await withEnv({ ...c.env, ...extraEnv }, () => WScanDep(c.prj, c.out))
+            }
+            catch (e) {
+                err = e
+            }
+            finally {
+                [console.log, console.error, console.warn] = bak
+            }
+            return { r, err, logs }
+        }
+        let head = /^無法取得呼叫端專案\(.+\)生效之 npm 倉庫設定,已中止/
+
+        before(function() {
+            emptyGlobal = wr(path.join(fdt, 'rg', 'empty-global.npmrc'), '\n')
+        })
+        beforeEach(async function() {
+            regs.A = await fakeNpmRegistry(ports.A, scopePackages)
+            regs.B = await fakeNpmRegistry(ports.B, {}) //解析不到任何套件
+            regs.S = await fakeNpmRegistry(ports.S, { '@acme/lib': { '1.0.0': {} } })
+            npmMode = 'real'
+        })
+        afterEach(async function() {
+            for (let k of Object.keys(regs)) await regs[k].close()
+            regs = {}
+        })
+
+        //spec 1、2(專案層 .npmrc 指 A、使用者層指 B → 由 A 安裝; 於呼叫端專案目錄取得): 修前由 B 解析而 npm install 失敗
+        it(`should install from the registry of the calling project (A) rather than the user-level one (B), reading the settings in the folder of the package.json`, async function() {
+            let c = setup(scopeProject, `registry=${regs.A.url}\n`, `registry=${regs.B.url}\n`)
+            let { r, err } = await run(c)
+            assert.strict.equal(err, null, err && err.message)
+            assert.strict.equal(r, 'ok')
+            assert.strict.deepStrictEqual(calls.map((v) => v.kind), ['npm', 'tool', 'tool', 'tool', 'tool', 'spawn'])
+            assert.strict.deepStrictEqual(cfgCalls.map((v) => v.cwd), [path.dirname(c.prj)])
+            assert.strict.deepStrictEqual(installedNames(path.join(c.out, 'test', 'node_modules')), scopeInstalled)
+            assert.strict.ok(regs.A.requests().some((v) => v.endsWith('.tgz')), `套件應取自 A: ${regs.A.requests()}`)
+            assert.strict.deepStrictEqual(regs.B.requests(), [])
+            let rc = fs.readFileSync(path.join(c.out, 'test', '.npmrc'), 'utf8')
+            assert.strict.ok(rc.includes(`registry="${regs.A.url}"`) && !rc.includes(regs.B.url), rc)
+            assert.strict.equal(JSON.parse(fs.readFileSync(path.join(c.out, 'result.json'), 'utf8')).scope, 'dependencies')
+            //不改呼叫端專案: 其資料夾內仍只有 package.json 與 .npmrc
+            assert.strict.deepStrictEqual(fs.readdirSync(path.dirname(c.prj)).sort(), ['.npmrc', 'package.json'])
+        })
+
+        //spec 2(@scope:registry 只設在專案層 → 該 scope 由指定倉庫安裝)
+        it(`should install the packages of a scope from the @scope:registry that only the calling project sets`, async function() {
+            let c = setup(pkgScoped, `@acme:registry=${regs.S.url}\n`, `registry=${regs.A.url}\n`)
+            let { r, err } = await run(c)
+            assert.strict.equal(err, null, err && err.message)
+            assert.strict.equal(r, 'ok')
+            let nm = path.join(c.out, 'test', 'node_modules')
+            assert.strict.deepStrictEqual(installedNames(nm), ['@acme', ...scopeInstalled])
+            assert.strict.equal(fs.existsSync(path.join(nm, '@acme', 'lib', 'package.json')), true)
+            assert.strict.ok(regs.S.requests().some((v) => v.includes('@acme')), `@acme/lib 應取自 S: ${regs.S.requests()}`)
+            assert.strict.equal(regs.A.requests().some((v) => v.includes('@acme')), false)
+            let rc = fs.readFileSync(path.join(c.out, 'test', '.npmrc'), 'utf8')
+            assert.strict.ok(rc.includes(`@acme:registry="${regs.S.url}"`), rc)
+        })
+
+        //spec 3(專案層 .npmrc 含 include[]=dev 時仍不被帶入; dev 不落地、#27 驗證照常)
+        it(`should not carry include[]=dev or any other setting but the registries from the calling project: devDependencies stay out and the scope stays true (Gitea #27)`, async function() {
+            let c = setup(scopeProject, `registry=${regs.A.url}\ninclude[]=dev\nproduction=false\nomit[]=optional\nstrict-ssl=false\n`, `registry=${regs.B.url}\n`)
+            let { r, err } = await run(c)
+            assert.strict.equal(err, null, err && err.message)
+            assert.strict.equal(r, 'ok')
+            let nm = path.join(c.out, 'test', 'node_modules')
+            for (let name of scopeNotInstalled) assert.strict.equal(fs.existsSync(path.join(nm, name)), false, `${name} 不應被安裝`)
+            assert.strict.deepStrictEqual(installedNames(nm), scopeInstalled)
+            let rc = fs.readFileSync(path.join(c.out, 'test', '.npmrc'), 'utf8')
+            for (let k of ['include', 'production', 'omit', 'strict-ssl']) assert.strict.equal(rc.includes(k), false, `.npmrc 不應含 ${k}: ${rc}`)
+            assert.strict.equal(JSON.parse(fs.readFileSync(path.join(c.out, 'result.json'), 'utf8')).scope, 'dependencies')
+        })
+
+        //spec 3(不得把任何認證值寫入 fdOut、log、錯誤訊息或結果檔)
+        it(`should write no credential into fdOut or the log: not the host-keyed _authToken, _auth, username or _password of the project or the user level`, async function() {
+            let projRc = [
+                `registry=${regs.A.url}`,
+                `//127.0.0.1:${ports.A}/:_authToken=${SEC.projToken}`,
+                `//127.0.0.1:${ports.A}/:_auth=${b64(SEC.projAuth)}`,
+                `//127.0.0.1:${ports.A}/:username=${SEC.projUser}`,
+                `//127.0.0.1:${ports.A}/:_password=${b64(SEC.projPass)}`,
+                `_authToken=${SEC.projToken}`,
+                '',
+            ].join('\n')
+            let c = setup(scopeProject, projRc, `//127.0.0.1:${ports.B}/:_authToken=${SEC.userToken}\n`)
+            let { r, err, logs } = await run(c)
+            assert.strict.equal(err, null, err && err.message)
+            assert.strict.equal(r, 'ok')
+            //前提: 認證確在呼叫端設定內, 且 log 有記載沿用之倉庫(攔截有效)
+            assert.strict.ok(fs.readFileSync(path.join(path.dirname(c.prj), '.npmrc'), 'utf8').includes(SEC.projToken))
+            assert.strict.ok(logs.some((v) => v.includes('隔離安裝沿用呼叫端專案之倉庫設定')), logs.join('\n'))
+            assert.strict.deepStrictEqual(leaks(logs.join('\n')), [])
+            let files = listFiles(c.out)
+            assert.strict.ok(files.some((f) => f.endsWith('result.json')) && files.some((f) => f.endsWith('.npmrc')), '應有 result.json 與 .npmrc')
+            for (let f of files) assert.strict.deepStrictEqual(leaks(fs.readFileSync(f, 'latin1')), [], `${f} 含認證值`)
+        })
+
+        //spec 1(結果只取決於呼叫端專案之設定): fdOut/test 內上次或他處留下之 .npmrc(含 include[]=dev 與舊倉庫)不被沿用
+        it(`should replace a stale .npmrc in fdOut/test instead of reusing it`, async function() {
+            let c = setup(scopeProject, `registry=${regs.A.url}\n`, `registry=${regs.B.url}\n`)
+            wr(path.join(c.out, 'test', '.npmrc'), `registry=http://127.0.0.1:${ports.B}/\ninclude[]=dev\n`)
+            let { r, err } = await run(c)
+            assert.strict.equal(err, null, err && err.message)
+            assert.strict.equal(r, 'ok')
+            let rc = fs.readFileSync(path.join(c.out, 'test', '.npmrc'), 'utf8')
+            assert.strict.ok(rc.includes(`registry="${regs.A.url}"`) && !rc.includes('include') && !rc.includes(regs.B.url), rc)
+            assert.strict.deepStrictEqual(installedNames(path.join(c.out, 'test', 'node_modules')), scopeInstalled)
+        })
+
+        //spec 4(取得生效設定失敗: 拋錯、不退回預設、寫明理由; 不含認證值; 未進入安裝與掃描、不寫 fdOut)
+        for (let [title, mode, env, tail] of [
+            ['npm config list exits with 1', 'exit1', {}, /npm config list --json 離開碼 1;請於該資料夾執行 npm config list 檢視原因$/],
+            ['npm config list prints something that is not JSON', 'text', {}, /npm config list --json 之輸出不是 JSON 物件$/],
+            ['npm config list never ends within W_NPM_CONFIG_TIMEOUT', 'hang', { W_NPM_CONFIG_TIMEOUT: '3' }, /npm config list --json 逾時\(超過 3 秒未完成\).*W_NPM_CONFIG_TIMEOUT/],
+        ]) {
+            it(`should reject before installing or writing anything when ${title}, without any credential in the message or the log`, async function() {
+                let c = setup(scopeProject, `registry=${regs.A.url}\n`, `registry=${regs.B.url}\n`)
+                let { r, err, logs } = await run(c, { ...pathWith(fakeNpmDir), FAKE_NPM_MODE: mode, FAKE_NPM_SECRET: SEC.fakeNpm, ...env })
+                assert.strict.equal(r, null)
+                assert.strict.ok(err instanceof Error, 'WScanDep 應 reject 而非改用預設倉庫')
+                assert.strict.match(err.message, head)
+                assert.strict.match(err.message, tail)
+                assert.strict.deepStrictEqual(leaks(err.message + '\n' + logs.join('\n')), [])
+                assert.strict.deepStrictEqual(calls, []) //未進入安裝與掃描
+                assert.strict.deepStrictEqual(regs.A.requests().concat(regs.B.requests()), [])
+                assert.strict.equal(fs.existsSync(c.out), false, 'fdOut 不應被建立')
+            })
+        }
+
+        it(`should reject, naming how to fix it, when the registry of the calling project embeds credentials in its URL (npm lists no registry then)`, async function() {
+            let c = setup(scopeProject, `registry=http://${SEC.urlUser}:${SEC.urlPass}@127.0.0.1:${ports.A}/\n`, `registry=${regs.B.url}\n`)
+            let { r, err, logs } = await run(c)
+            assert.strict.equal(r, null)
+            assert.strict.ok(err instanceof Error)
+            assert.strict.match(err.message, head)
+            assert.strict.match(err.message, /未列出 registry/)
+            assert.strict.deepStrictEqual(leaks(err.message + '\n' + logs.join('\n')), [])
+            assert.strict.deepStrictEqual(calls, [])
+            assert.strict.deepStrictEqual(regs.B.requests(), []) //未退回使用者層之 B
+            assert.strict.equal(fs.existsSync(c.out), false)
+        })
+
+        it(`should reject a W_NPM_CONFIG_TIMEOUT that is not a positive number before obtaining the tools, reading the npm settings or writing anything`, async function() {
+            let c = setup(scopeProject, `registry=${regs.A.url}\n`, `registry=${regs.B.url}\n`)
+            for (let v of ['0', 'abc']) {
+                let { r, err } = await run(c, { W_NPM_CONFIG_TIMEOUT: v })
+                assert.strict.equal(r, null, v)
+                assert.strict.ok(err instanceof Error, v)
+                assert.strict.ok(err.message.includes('W_NPM_CONFIG_TIMEOUT 須為正數'), err.message)
+            }
+            assert.strict.deepStrictEqual(calls, [])
+            assert.strict.deepStrictEqual(cfgCalls, [])
+            assert.strict.deepStrictEqual(netCalls, [])
+            assert.strict.equal(fs.existsSync(c.out), false)
+            assert.strict.equal(fs.existsSync(c.env.W_BIN_CACHE), false) //ensureBins 未執行
+        })
+
     })
 
 })

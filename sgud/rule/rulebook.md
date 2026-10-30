@@ -13,6 +13,7 @@
 | R-NPM-TIMEOUT-01 | npm install 之時限與逾時之樹狀結束(Gitea #24 三) | 本檔 |
 | R-SCAN-TIMEOUT-01 | syft、grype、osv-scanner 之單次時限與逾時之樹狀結束(Gitea #24 三之同類;主控裁定 2026-10-30 run02) | 本檔 |
 | R-EXSBOM-PORT-01 | ex-sbom 服務埠之監聽者之身分確認改用 wsemi `execProcessPortPidsSync`(useBoth),不自行解析 netstat;選埠全表快照之 netstat 解析不看狀態欄(2026-10-30 run03,wsemi 1.9.32 報告 §6 第 3 列) | 本檔 |
+| R-NPM-REGISTRY-01 | 隔離安裝沿用呼叫端專案之倉庫位址設定:於 `fpIn` 所在資料夾取 `npm config list --json` 之生效 `registry` 與 `@scope:registry`,寫入 `fdOut/test/.npmrc`;只帶位址、不帶 include 等安裝集合設定與認證值;取得失敗拋錯(主控提出,Gitea #27 run02 之範圍外發現,2026-10-30 任務 20261030174519 run01) | 本檔 |
 | R-SCAN-SCOPE-01 | 掃描範圍只算 dependencies:隔離安裝 `npm install --omit=dev`、`result.json` 之 `scope`、`result.md`／`待更新套件.md` 之範圍說明、`updateList` 只剩正式相依樹、範圍不受呼叫端 npm 設定影響〔子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯〕(Gitea #27,使用者裁定,2026-10-30 run01、run02) | 本檔 |
 
 ## R-BIN-ENSURE-01 外部執行檔之存放、下載、校驗與離線
@@ -310,3 +311,55 @@ M1 移除 `--omit=dev`(= 修前);M2 加 `--omit=peer`;M4 `result.json` 不寫 `s
 ### 變異(2026-10-30 run02,規則 7;15 個皆被抓到,腳本副本 `C:\opensrcOper\dnow\20261030151214\agent-out\run02-evidence\mutate.mjs`)
 
 M0 = run01 之碼(不傳環境副本且無驗證)12 案紅;M1 不移除環境變數(保留驗證)7 案紅;M2 只移除 `include` 6 案紅;M3 比對不分大小寫去掉 `/i` 2 案紅;M4 過度移除(所有 `npm_config_*`)單元 1 案紅;M5 改動 `process.env` 而非副本 8 案紅;M6 不呼叫驗證 5 案紅;M7 驗證只看隱藏鎖定檔(去 `package-lock.json` 之落地檢查)1 案紅;M8 驗證只看 `package-lock.json` 2 案紅;M9 去落地檢查(`dev:true` 一律算裝入,誤報)10 案紅;M10 去「有套件卻無鎖定檔」之 fail-closed 1 案紅;M11 `devOptional` 也當 dev(誤報)1 案紅;M12 鎖定檔損毀當作沒有(fail-open)1 案紅;M13 訊息不截斷 1 案紅;M14 訊息去掉排除方式 5 案紅.
+
+## R-NPM-REGISTRY-01 隔離安裝沿用呼叫端專案之倉庫位址設定
+
+來源:主控提出(Gitea #27 run02 之範圍外發現,見 `C:\opensrcOper\dhist\20261030151214\agent-out\run02-修正報告.md` §2 案 19、§8-3),任務 20261030174519 run01;主控裁定 1~5.
+
+背景(實測,npm 12.1.0):隔離安裝只把掃描目標 `package.json` 複製到 `fdOut/test` 再 `npm install --omit=dev`;npm 之專案層設定檔取自安裝目錄,讀不到呼叫端專案層之 `.npmrc`。自有套件只發布於私有倉庫,專案方常把 `registry=` 只寫在專案層;專案層設 `registry=A`、使用者層設 `registry=B` 時,隔離安裝由 B 解析(自有套件拿到舊版或 `ETARGET`),掃描結果與專案實際安裝不符.
+
+### 規則
+
+1. **於呼叫端專案目錄取生效值**:`WScanDep` 在建立 `fdOut` 之前,於 `dirname(package.json)` 執行 `npm config list --json`(`src/npmRegistry.mjs` 之 `readCallerRegistry`,經 `runTool` 的 `shell: true`〔Windows 之 npm 為 `npm.cmd`〕與 `cwd`,有時限與樹狀結束),取專案層、使用者層、全域層、環境變數合併後之設定.**不自行解析 `.npmrc`**(優先序與環境變數展開以 npm 為準).時限 `W_NPM_CONFIG_TIMEOUT`(秒,預設 60,不合法值於任何下載與寫入前拋錯,同其他時限變數).
+2. **只帶倉庫位址類**(`REGISTRY_KEY` 白名單):預設倉庫 `registry` 與各 `@scope:registry`.不帶 `include`／`production`／`dev`／`also`／`omit`(R-SCAN-SCOPE-01 之 `scope: 'dependencies'` 不得失真,規則 7 之環境移除與安裝後驗證不變)、不帶 TLS(`cafile`、`strict-ssl`)與代理設定、不帶認證(`_authToken`、`_auth`、`username`、`_password`,依主機鍵者 npm 本來就由使用者層讀得到).值須為 http(s) 網址,否則拋錯(訊息只寫鍵名);網址內嵌之帳密去除(`strippedAuth` 標出被去除之鍵,log 一行說明).
+3. **帶入方式:寫 `fdOut/test/.npmrc`,不用 CLI 旗標**.理由:隔離安裝為 `shell:true`,旗標值須過 cmd.exe,網址內 `& % ^` 有誤解析與注入風險;`.npmrc` 無此問題(值以 `JSON.stringify` 引號包住)且留有可檢視之證據.專案層設定檔優先於使用者／全域層;環境變數本就照傳安裝子行程且已含於生效值,故安裝所見等同呼叫端專案.不採環境變數法(`npm_config_@scope:registry`):npm 讀環境變數會把鍵名 `_` 換 `-`、轉小寫,含底線之 scope 名會被改壞.
+4. **`fdOut/test/.npmrc` 由本工具決定**:`writeRegistryNpmrc` 先刪既有者(上次或他處留下者,含 `include[]=dev`)並回驗,再寫入(`entries` 空則不建);位於 `clearNpmState` 之後、`npmInstall` 之前.不改呼叫端專案目錄、使用者層與全域層設定檔、`process.env`.
+5. **取得失敗即拋錯,不退回現行行為**(主控裁定 4 之判斷:退回會使隔離安裝改由預設倉庫解析,掃描結果與專案實際安裝不符而不自知,正是本規則要消除者;`npm config` 失敗時 `npm install` 多半同樣失敗,拋錯無額外代價).失敗態:逾時(`runTool` 樹狀結束)、離開碼非 0、輸出非 JSON 物件、無法啟動(含資料夾不存在、npm 不在 PATH)、**npm 未列出 `registry`**.訊息 `無法取得呼叫端專案(<資料夾>)生效之 npm 倉庫設定,已中止(不改用隔離資料夾之預設設定,以免掃描結果與專案實際安裝不符):<原因>`;**訊息與 log 不含 npm 之 stdout／stderr 原文、不含設定值**(`JSON.parse` 之錯誤訊息亦不附,其含輸入片段).發生於 `mkdir(outDir)` 之前:不進入安裝與掃描、`fdOut` 不被建立.「呼叫端無任何 npm 設定」不是失敗:npm 一律列出 `registry`(未設為預設倉庫),照實寫入(與未沿用時等價).
+6. **不新增結果欄位**(`result.json`／`result.md`／`待更新套件.md` 不變);log 多二行(讀取設定、沿用之倉庫位址〔已去除帳密〕).
+
+### 盤點指令與站點全集
+
+| 盤點指令(可重跑) | 預期 | 判準 |
+| --- | --- | --- |
+| Grep `npm config` 於 `src/`(程式碼) | 只有 `src/npmRegistry.mjs`(`NPM_CONFIG_CMD`) | 已套 |
+| Grep `readCallerRegistry`／`writeRegistryNpmrc` 於 `src/WScanDep.mjs` | 各一處,前者在 `mkdir(outDir)` 之前、後者在 `copyFile` 之後與 `npmInstall` 之前 | 已套 |
+| Grep `REGISTRY_KEY` 於 `src/` | 定義與 `pickRegistrySettings` 一處 | 已套 |
+| Grep `spawn(` 於 `src/`(`shell`) | `install.mjs`(`npm install`,`shell:true`)與 `proc.mjs`(`runTool`,`shell` 由呼叫端給;`readCallerRegistry` 傳 `true` 並以空 args) | 已套(args 為空,無 Node 24 DEP0190 警告) |
+
+### 對應測試
+
+| 項目 | 測試檔 | 說明 |
+| --- | --- | --- |
+| 挑選與去帳密(單元) | `test/unit-npmRegistry.test.mjs`〈pickRegistrySettings〉 | 只挑 `registry`／`@scope:registry`(`include`、`production`、`dev`、`also`、`omit`、`only`、`optional`、`cafile`、代理、各種認證鍵一律不帶,其值不出現在輸出);網址內嵌帳密去除並標出鍵;非 http(s)／非網址拋錯且訊息不含該值(5 種);`null`／空字串／非字串略過;排序;`REGISTRY_KEY` 邊界(前後綴相同之鍵不收) |
+| `.npmrc` 產生與寫入(單元) | 同上〈renderNpmrc 與 writeRegistryNpmrc〉 | 一行註解加引號包住之位址行;寫入不動資料夾內他檔;既有 `.npmrc`(含 `include[]=dev`)被取代;entries 空時刪除既有並回傳 `null`;無既有檔不建檔 |
+| 時限變數(單元) | 同上〈npmConfigTimeoutMs〉 | 預設 60 秒、換算、6 種不合法值拋錯並指明變數名 |
+| 屬實前提 | `test/api-npmRegistry.test.mjs`「前提」二案 | 真實 npm:專案層 A／使用者層 B 時未沿用之安裝由 B 解析(B 被詢問、A 完全未被詢問);`@scope:registry` 只設在專案層時 `@acme/lib` 改向預設倉庫詢問而失敗 |
+| 專案層 A、使用者層 B → 由 A 安裝 | 同上〈registry: 專案層 A、使用者層 B〉、`test/api-wsdEntry.test.mjs`「should install from the registry of the calling project (A)…」 | 取得之生效 registry 為 A;寫入後隔離安裝由 A 解析、B 完全未被詢問;於 `package.json` 所在資料夾查詢(`cfgCalls`);呼叫端專案目錄不被改動;registry 只在使用者層、環境變數優先於專案層、全未設(預設倉庫)各一案 |
+| `@scope:registry` 只設在專案層 | 同上、`api-wsdEntry`「…@scope:registry that only the calling project sets」 | 該 scope 之套件取自指定倉庫(S),其餘取自 A,A 未被詢問 `@acme/lib` |
+| 不帶 include 等 | 同上、`api-wsdEntry`「should not carry include[]=dev…」 | 專案層含 `include[]=dev`、`production=false`、`omit[]=optional`、`strict-ssl=false`(前提:該設定在呼叫端目錄確實生效):`.npmrc` 只含倉庫位址行、dev 套件不落地、安裝後驗證通過、`scope` 為 `dependencies` |
+| 認證值不出現 | 同上、`api-wsdEntry`「should write no credential…」 | 專案層／使用者層之 `_authToken`、`_auth`、`username`、`_password`(依主機鍵與不分主機)不出現在 `.npmrc`、`package-lock.json` 等 `fdOut` 全部檔案、取得之設定物件與攔截到之 log;網址內嵌帳密之 registry(npm 不列出)拋錯且訊息無帳密;其他 npm 若列出則去除(替身 npm) |
+| 取得失敗 | 同上〈取得生效設定失敗〉、`api-wsdEntry`(3 案＋內嵌帳密 1 案) | 替身 npm(`test/tools/fakeNpm/`)模擬離開碼 1／截斷 JSON／非 JSON／`[]`／`null`／輸出缺 registry／非網址 registry／逾時;npm 不在 PATH;資料夾不存在:皆拋錯、訊息指明資料夾與原因、不含 stderr／stdout 與認證值;`WScanDep` 層 `calls` 為空、`fdOut` 不被建立、未退回使用者層之 B;逾時案驗證行程樹已結束(PID 回驗) |
+| `fdOut/test/.npmrc` 由本工具決定 | `api-wsdEntry`「should replace a stale .npmrc…」 | 預置含舊倉庫與 `include[]=dev` 之 `.npmrc`,執行後只剩呼叫端專案之位址 |
+| 時限變數入口 | `api-wsdEntry`「should reject a W_NPM_CONFIG_TIMEOUT that is not a positive number…」 | 於取工具、讀 npm 設定與任何寫入之前拒絕 |
+| 不受影響 | `test/api-installScopeEnv.test.mjs`、`api-installScope`、`unit-installGuard`、`api-npmInstall`、`unit-proc`、`api-scanTimeout`、`api-wsdEntry` 既有案 | `runTool` 新增選項 `cwd`／`shell` 後仍綠 |
+
+### 已知缺口
+
+- **內嵌帳密之 `@scope:registry` 無從辨識**:npm 對網址內嵌帳密之 `registry`／`@scope:registry` 視為受保護(`npm config get` 拒絕、`config list --json` 省略該鍵)。預設 `registry` 缺席可辨識而拋錯;`@scope:registry` 缺席與未設無從區分,不會被沿用(該 scope 改由預設倉庫解析,安裝多半失敗)。處置:`.npmrc` 勿於網址內嵌帳密,改以 `//主機/:_authToken` 依主機鍵設定。
+- **TLS 與代理設定不帶**(`cafile`、`strict-ssl`、`proxy`、`https-proxy` 等):若私有倉庫須專案層才有之自簽憑證設定,隔離安裝連線失敗(多為使用者層設定,則 npm 本來讀得到)。依裁定 3 只帶位址;需要時另議。
+- **工作區(workspaces)**:查詢結果就是 npm 在 `package.json` 所在資料夾所見者(專案層檔位置由 npm 決定,monorepo 根目錄之 `.npmrc` npm 於成員資料夾是否讀取,以 npm 為準);無 workspaces 夾具,未驗證。
+- 真實 npm 本身之輸出(stdio 繼承)不在 `api-wsdEntry` 之 console 攔截範圍;認證值檢查涵蓋 `fdOut` 全部檔案、攔截到之 log 與錯誤訊息。
+
+### 變異(2026-10-30 run01;腳本副本 `C:\opensrcOper\dnow\20261030174519\agent-out\run01-evidence\mutate.mjs`)
+
+對照組(BASE)unit 25／api 21／entry(`-g registry`:新案 10＋既有 1)11 全綠;M0~M17 共 18 個變異皆被抓到(紅案數):M0 = 修前(`WScanDep` 不查詢、不寫 `.npmrc`)9;M1 只帶 `registry`、不帶 `@scope:registry` 16;M2 `.npmrc` 多帶 `include[]=dev` 13;M3 不去除網址內嵌帳密 3;M4 執行 npm config 失敗靜默退回預設 3;M5 忽略離開碼非 0 2;M6 離開碼非 0 之訊息附 stderr 2;M7 輸出非 JSON 之訊息附 stdout 5;M8 於錯誤目錄(`process.cwd()`)查詢 6;M9 不先刪既有 `.npmrc`、改附加寫入 3;M10 時限變數名稱錯 9;M11 npm 未列出 registry 不拋錯 3;M12 查詢但不寫檔 5;M13 `.npmrc` 值不加引號 1;M14 放行非 http(s) 網址 4;M15 `WScanDep` 吞掉查詢失敗 4;M16 `runTool` 不傳 `cwd` 12;M17 不標出被去除帳密之鍵 2.腳本每次還原並回驗位元組全等.
