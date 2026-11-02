@@ -12,8 +12,12 @@ test/output
 
 syft.spdx.json
 
-# 外部執行檔不入 npm 包(規格 S1、S5):bin/ 只有 manifest.json 入包(基準清單);快取與測試暫存夾不入包
+# 外部執行檔之快取(規格 S5)
+/bin-cache/
+
+# 以下為 npm 發布範圍原則2第1條(外部執行檔與其附屬; 規格 S1、S5)之排除項
+# bin/ 只有 manifest.json 入包(基準清單), 下載而得之 syft.exe 等執行檔不入包
 /bin/*
 !/bin/manifest.json
-/bin-cache/
+# 存放執行檔副本之測試暫存夾不入包
 /test/_tmp/

@@ -76,13 +76,21 @@ describe(`bin/manifest.json`, function() {
         assert.strict.deepStrictEqual(fs.readdirSync('bin'), ['manifest.json'])
     })
 
-    it(`should not pack external executables into the npm package, only bin/manifest.json, even with decoy files lying around (S1, S5, T1)`, function() {
+    it(`should not pack external executables, archives, CLAUDE*.md, tmp/, test/_tmp/ or .env, but pack git-tracked sgud/ and test/tools/, even with decoy files lying around (S1, S5, T1, npm發布範圍 原則1、原則2〈套件測試之 npm 包檢查〉)`, function() {
+        //規格: 自有套件之npm發布範圍 原則1(npm包=git版控之內容, sgud/、docs/、test/、toolg/ 皆隨包)、原則2〈套件測試之 npm 包檢查〉(2026-11-02 使用者裁示A)
+        //①「不得入包」只列: 外部執行檔與壓縮檔(.exe、.dll、.node、.msi、.zip、.7z、.gz、.tgz等)、bin/ 除 manifest.json 外之檔、CLAUDE*.md、tmp/、test/_tmp/、.env
+        //  sgud/、docs/、test/、toolg/、script.txt、開發設定檔等依原則1隨包, 不得斷言其不在; 反向斷言 sgud/ 與 test/tools/ 隨包(原則4)
+        //②大小上限只計執行期之 src/、dist/、bin/: 本套件原無大小上限斷言, 故不增設
         //誘餌檔: 缺少對應之忽略規則時, 這些檔確定會進包而使本案變紅(不依賴他案是否恰留下副本)
         let decoys = [
             'bin/__decoy__.exe',
             'bin/__decoy__.zip.001',
+            'bin/__decoy__.tgz',
             'bin-cache/aa/__decoy__.exe',
             'test/_tmp/__decoy__/__decoy__.exe',
+            'tmp/__decoy__/__decoy__.txt',
+            'CLAUDE__decoy__.md',
+            '.env',
         ]
         for (let p of decoys) {
             assert.strict.equal(fs.existsSync(p), false, `decoy already exists: ${p}`)
@@ -117,10 +125,14 @@ describe(`bin/manifest.json`, function() {
                 catch (e) {} // eslint-disable-line no-unused-vars
             }
         }
-        assert.strict.deepStrictEqual(fps.filter((v) => /\.(exe|dll|msi|zip|7z|\d{3})$/i.test(v)), [])
-        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('bin/') || v.startsWith('bin-cache/')), ['bin/manifest.json'])
-        assert.strict.equal(fps.some((v) => v.startsWith('test/_tmp/')), false)
-        assert.strict.equal(fps.some((v) => v.startsWith('sgud/')), false)
+        assert.strict.deepStrictEqual(fps.filter((v) => /\.(exe|dll|node|msi|zip|7z|gz|tgz|\d{3})$/i.test(v)), []) //原則2①: 外部執行檔與壓縮檔
+        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('bin/') || v.startsWith('bin-cache/')), ['bin/manifest.json']) //原則2①: bin/ 除 manifest.json 外之檔
+        assert.strict.deepStrictEqual(fps.filter((v) => /(^|\/)CLAUDE[^/]*\.md$/.test(v)), []) //原則2①: CLAUDE*.md
+        assert.strict.deepStrictEqual(fps.filter((v) => v === 'tmp' || v.startsWith('tmp/')), []) //原則2①: tmp/
+        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('test/_tmp/')), []) //原則2①: test/_tmp/
+        assert.strict.deepStrictEqual(fps.filter((v) => v === '.env' || v.endsWith('/.env')), []) //原則2①: .env
+        assert.strict.equal(fps.includes('sgud/state/state.md'), true, 'sgud/state/state.md') //原則1、原則4: sgud/ 隨包
+        assert.strict.equal(fps.some((v) => v.startsWith('test/tools/')), true, 'test/tools/') //原則4: test/tools/ 隨包
         for (let p of ['src/ensureBins.mjs', 'src/toolVersions.mjs', 'src/WScanDep.mjs', 'bin/manifest.json', 'package.json']) {
             assert.strict.equal(fps.includes(p), true, p)
         }

@@ -44,6 +44,8 @@
 
 ## 最近一次驗證
 
+2026-11-02(任務 20261102182000 pk-scan-dep,npm 包檢查改依 `dspec/自有套件之npm發布範圍.md` 原則 2〈套件測試之 npm 包檢查〉):`test/unit-binManifest.test.mjs` 之 T1 案不再斷言 `sgud/` 不入包,改斷言 `sgud/state/state.md`、`test/tools/` 隨包並擴充「不得入包」至 `.node`／`.gz`／`.tgz`／`CLAUDE*.md`／`tmp/`／`.env`;`.npmignore` 首段改為完整抄錄 `.gitignore`、其後排除項加註原則 2 第 1 條(打包清單 113 檔不變,其中 `sgud/` 4 檔,執行期 `src/`+`dist/`+`bin/` 15 檔 442,040 位元組);修前 `unit-binManifest` 6 通過/1 失敗(`sgud/` 不應入包),修後 7/0;變異 6 個(假 `.dll`、`sgud` 不入包、`test/tools` 不入包、`CLAUDE*.md`／`tmp`／`.env` 排除規則移除)皆被抓到;全套 `npm test`(`--lock`)235 通過/0 失敗(約 3 分 13 秒).報告:`C:\opensrcOper\dnow\20261102182000\agent-out\pk-scan-dep-修正報告.md`.
+
 2026-10-30(任務 20261030174519 run01,隔離安裝沿用呼叫端專案之倉庫位址設定):**全套 `npm test`(`--lock`)235 通過/0 失敗**(兩次,約 1 分 25~35 秒;run02 之 178 + 新增 57 案:`unit-npmRegistry` 25、`api-npmRegistry` 22、`api-wsdEntry` 10);修前紅(`WScanDep` 不查詢、不寫 `.npmrc` = 修前行為)`api-wsdEntry` 新案 9 紅(`npm install 失敗(exit 1)`:由使用者層之 B 解析);變異 M0~M17 共 18 個皆被抓到(對照組全綠);eslint 變更檔 0 error.報告:`C:\opensrcOper\dnow\20261030174519\agent-out\run01-修正報告.md`.
 
 2026-10-30(任務 20261030151214 run02,Gitea #27 之 §9 待裁示:範圍不受呼叫端 npm 設定影響):**全套 `npm test`(`--lock`)178 通過/0 失敗**(約 1 分 44 秒;run01 之 154 + 新增 24 案:`unit-installGuard` 11、`api-installScopeEnv` 11、`api-wsdEntry` 2);修前紅(= run01 之碼,子行程不傳環境副本且無安裝後驗證)12 案紅;變異 M0~M14 共 15 個皆被抓到;npm 設定探測 22 案(`npm_config_include`／`production`／`dev`／`also` 及使用者層、全域層、安裝目錄內設定檔會抵消 `--omit=dev`,呼叫端專案 `.npmrc` 不會被讀到);eslint 變更行 0 error(`install.mjs:137` 為既有舊問題).報告:`C:\opensrcOper\dnow\20261030151214\agent-out\run02-修正報告.md`.

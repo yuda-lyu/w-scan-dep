@@ -26,7 +26,7 @@
 
 1. **套件端只做三件事**(E2):①提供清單 `bin/manifest.json`(由 `toolg/genBinManifest.mjs` 產生,不手寫);②經 `src/ensureBins.mjs` 取得路徑後啟動;③主函數以靜態屬性 `WScanDep.ensureBins` 匯出(不加具名匯出).不得另寫下載、快取、鏡像、校驗、解壓;不得有 `postinstall`(D1).
 2. **清單項**:廠商發布之版本標籤資產網址(`/releases/download/<tag>/…`,不得 `releases/latest`,M2),壓縮檔與解出之執行檔各記 sha256 與大小,`note` 寫明核對依據(廠商 checksums,或「首次下載自算」與日期,M3);repo 內不放任何廠商檔(S3),`bin/` 只有 `manifest.json`.
-3. **不入 npm 包**:`.npmignore` 有 `/bin/*`、`!/bin/manifest.json`、`/bin-cache/`、`/test/_tmp/`;`.gitignore` 有 `/bin-cache/`(S1、S5).
+3. **不入 npm 包**:`.npmignore` 首段完整抄錄 `.gitignore`(含 `/bin-cache/`),其後只有 `/bin/*`、`!/bin/manifest.json`、`/test/_tmp/`(皆註明屬 `C:\opensrcOper\dspec\自有套件之npm發布範圍.md` 原則 2 第 1 條;S1、S5);`sgud/`、`docs/`、`test/`、`toolg/` 等 git 版控內容依原則 1 隨包,不得排除(原則 4).本套件 git 版控之 `test/` 僅約 280KB、無 ≥10MB 非程式碼資料,故無第 2 條之排除項.
 4. **所啟動之執行檔一律為 `ensureBins` 回傳之路徑**(`<快取>/<sha256>/<檔名>`);執行期之資料交換檔不寫執行檔所在夾(ex-sbom 之工作目錄為 `fdOut/exsbom-work/<pid>-<6 碼>`,`src/exsbom.mjs`;scan 產物在 `fdOut/scan`).
 5. **工具取得先於 `npm install`**:取不到(離線無快取、校驗不符)即中止,不待安裝數分鐘後才失敗(`src/WScanDep.mjs` 之 `await ensureBins(…)`;其前只有 `W_NPM_INSTALL_TIMEOUT` 與三個掃描工具時限環境變數之格式驗證,見 R-NPM-TIMEOUT-01、R-SCAN-TIMEOUT-01).
 6. **快取位置不可在 `fdOut` 之 `test`/`pics`/`exsbom-work` 內**(`assertToolsOutside`,`src/layout.mjs:23`):`test` 為 syft 掃描目標,工具放其內會被編入 SBOM;`pics`、`exsbom-work` 每次清除.
@@ -43,7 +43,7 @@
 | Grep `postinstall` 於 `package.json`、`scripts/` | 無 | 已套 |
 | Grep `spawn(\|spawnSync(` 於 `src/` | proc.mjs(`runTool`:syft/grype/osv 之 `spawn`,路徑來自 `tools[…].exePath`,由 scan.mjs 呼叫;`killTree`:逾時之 taskkill;2026-10-30 起 scan.mjs 不再直接 `spawnSync`)、exsbom.mjs(ex-sbom,路徑來自 `tools['ex-sbom'].exePath`)、install.mjs(npm install 之 `spawn`;2026-10-29 自 WScanDep.mjs 移入)、updatelist.mjs(npm ls)、exsbom.mjs 之系統指令(netstat、netsh、tasklist、taskkill) | 已套(執行檔路徑皆源自 `ensureBins`) |
 | `node C:/opensrcOper/tools/scan-bins.mjs --only w-scan-dep` | `OK w-scan-dep: 有清單;用 fsEnsureBins` | 已套 |
-| `npm pack --dry-run --json` | 無 exe/zip/dll;`bin/` 只有 `bin/manifest.json` | 已套(T1,`test/unit-binManifest.test.mjs`) |
+| `npm pack --dry-run --json` | 無外部執行檔與壓縮檔(`.exe`、`.dll`、`.node`、`.msi`、`.zip`、`.7z`、`.gz`、`.tgz`、`.NNN`);`bin/` 只有 `bin/manifest.json`;無 `CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env`;`sgud/state/state.md` 與 `test/tools/` 隨包(2026-11-02 起,npm 發布範圍原則 2〈套件測試之 npm 包檢查〉) | 已套(T1,`test/unit-binManifest.test.mjs`) |
 
 改造前(HEAD `8529d52`)站點全集與改後對照(`file:line`):
 
@@ -62,7 +62,7 @@
 
 | 規格項 | 測試檔 | 說明 |
 | --- | --- | --- |
-| T1 | `test/unit-binManifest.test.mjs` | `npm pack --dry-run`:先放誘餌檔(`bin/__decoy__.exe`、`bin-cache/…`、`test/_tmp/…`),包內無執行檔,`bin/` 只有 `manifest.json` |
+| T1 | `test/unit-binManifest.test.mjs` | `npm pack --dry-run`:先放誘餌檔(`bin/__decoy__.exe`、`.zip.001`、`.tgz`、`bin-cache/…`、`test/_tmp/…`、`tmp/…`、`CLAUDE__decoy__.md`、`.env`),包內無外部執行檔與壓縮檔、`CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env`,`bin/` 只有 `manifest.json`;反向斷言 `sgud/state/state.md`、`test/tools/` 隨包.不斷言 `sgud/`、`docs/`、`test/`、`toolg/` 等不在(原則 2①);本案原無大小上限斷言,未增設(原則 2②) |
 | T2(廠商檔改驗網址) | `test/unit-binManifest.test.mjs` | 每項為廠商 repo 之版本標籤資產網址,非 `releases/latest`;sha256/size/extract/note 俱全;repo 內無廠商檔 |
 | M1/M2 schema | `test/unit-binManifest.test.mjs` | `fsEnsureBins` 離線空快取得 `E_OFFLINE_MISSING`(非 `E_MANIFEST`) |
 | T3 | `test/api-ensureBins.test.mjs` | 本機 HTTP 伺服器扮 GitHub(主幹清單與標籤資產):首次下載→校驗→快取;第二次只取清單、不再下載資產;離線零請求 |

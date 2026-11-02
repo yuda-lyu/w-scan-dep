@@ -142,3 +142,10 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 - **替身 npm（`test/tools/fakeNpm/`）**：`npm.cmd` 轉呼叫 `fakeNpm.mjs`，置於 PATH 前端，使 `shell:true` 解析到它；`%~dp0` 展開不受含中文路徑影響（`.cmd` 檔本身僅 ASCII）。**替身只扮演 `config`，其他子指令（如 `install`）立即離開碼 3**：初版替身的 `hang` 模式對 `npm install` 也卡住，變異（不查詢）時安裝誤用替身 → 卡滿測試時限並遺留 `cmd.exe`＋`node` 行程樹，連 quiet-run 都等不到結束（需 `TaskStop`＋`--release-stale`）；改成非 `config` 即快速失敗後，誤用只是快速紅燈。替身修改於變異首輪之後，故首輪 M0 的 5 分鐘不代表現況。
 - **測試設計**：①npm 設定一律以 `npm_config_userconfig`／`npm_config_globalconfig` 指向暫存檔、`npm_config_registry` 設 `undefined` 清除（`npm test` 啟動之行程或開發機環境可能帶有），`npm_config_cache` 每案獨立（否則快取使 A 的請求數為 0）；②Windows 的 `process.env` 不分大小寫，`{...process.env, PATH: x}` 會產生 `Path` 與 `PATH` 兩鍵，改以找出既有鍵名（`/^path$/i`）再設值；③`api-wsdEntry` 的 `cp.spawn` 攔截新增 `npm config ` 放行（另記 `cfgCalls`，不進 `calls`，既有呼叫序列斷言不變）；④`mocha --parallel` 下各檔埠不可重疊：本輪用 8971～8973（`api-npmRegistry`）、8975～8977（`api-wsdEntry` 新案）；⑤真實 npm 之輸出（stdio 繼承）不在 console 攔截範圍，認證值檢查涵蓋 `fdOut` 全部檔案、攔截到之 log 與錯誤訊息。
 - **`fdOut/test/.npmrc` 視為本工具所有**：每次先刪再寫，結果只取決於呼叫端專案設定（上次留下或使用者放入之 `include[]=dev` 不會被沿用）；刪除後回驗。`clearNpmState` 與 `NPM_STATE` 未動。
+
+## npm 包檢查依發布範圍原則改寫（2026-11-02，任務 20261102182000 pk-scan-dep）
+
+- 規定隨 `dspec/自有套件之npm發布範圍.md` 改變：npm 包＝git 版控內容，`sgud/` 隨包；打包檢查測試（本套件為 `unit-binManifest` T1 案）只能斷言外部執行檔與壓縮檔、`bin/` 多餘檔、`CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env` 不在，不得斷言 `sgud/`、`docs/`、`test/`、`toolg/` 不在，反向斷言 `sgud/state/state.md`、`test/tools/` 在。大小上限只計 `src/`、`dist/`、`bin/`（本套件原無此斷言，未增設）。
+- 變異證明時暫改 `.npmignore`（加 `sgud`、`test/tools`、刪 `CLAUDE*.md`／`tmp`／`.env`）或暫放假 `.dll`，每次改完立即還原並以 `npm pack --dry-run` 清單與修前逐行 diff 確認一致；`tmp/` 規則的變異會讓 `./tmp/` 下的 quiet-run 日誌也入包，是預期的紅。
+- quiet-run 以 cmd 執行指令，`node_modules/.bin/mocha` 這種 POSIX 相對路徑會報「不是內部或外部命令」，單檔改用 `node node_modules/mocha/bin/mocha.js --no-parallel <檔> --timeout 180000`。
+- 全套測試中 `npm error code E404`／`EJSONPARSE` 等輸出是 `api-npmRegistry`／`api-npmInstall` 的負向案例（假 registry、壞 `package.json`），不是失敗。
