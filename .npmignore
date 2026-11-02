@@ -17,6 +17,3 @@ syft.spdx.json
 !/bin/manifest.json
 /bin-cache/
 /test/_tmp/
-
-# 指引要求文件入 git 版控、不入 npm 包(2026-10-22)
-sgud
