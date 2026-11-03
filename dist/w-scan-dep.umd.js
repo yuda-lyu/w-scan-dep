@@ -1,5 +1,5 @@
 /*!
- * w-scan-dep v1.0.17
+ * w-scan-dep v1.0.18
  * (c) 2018-2021 yuda-lyu(semisphere)
  * Released under the MIT License.
  */
