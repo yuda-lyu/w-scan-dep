@@ -101,7 +101,7 @@
 
 ## R-EXSBOM-FAIL-01 ex-sbom 之失敗只作廢截圖;意外結束之訊息附 log 之結束原因
 
-來源:Gitea #24(`建議w-scan-dep修正.md`,提出端 cgsmdb)一之建議 2、二;主控裁定 2、4、6(2026-10-29).
+來源:Gitea #24(`建議w-scan-dep修正.md`,提出端使用端)一之建議 2、二;主控裁定 2、4、6(2026-10-29).
 
 ### 規則
 
@@ -263,7 +263,7 @@
 
 ## R-SCAN-SCOPE-01 掃描範圍只算 dependencies
 
-來源:Gitea #27(`建議w-scan-dep調整.md`,提出端 cgsmdb);使用者裁定(掃描對象為網頁前後端服務或編譯出之 app,只算 `dependencies` 所提供者〔程式碼與其所附之執行檔〕,`devDependencies` 之開發與建置工具不在範圍,其風險由執行機自行掃描或防毒處理);主控裁定 1~5(2026-10-30 run01):採建議 1 之甲案、建議 2、3 照辦、不加掃開發工具之開關、`updateList` 隨之只剩正式相依樹.
+來源:Gitea #27(`建議w-scan-dep調整.md`,提出端使用端);使用者裁定(掃描對象為網頁前後端服務或編譯出之 app,只算 `dependencies` 所提供者〔程式碼與其所附之執行檔〕,`devDependencies` 之開發與建置工具不在範圍,其風險由執行機自行掃描或防毒處理);主控裁定 1~5(2026-10-30 run01):採建議 1 之甲案、建議 2、3 照辦、不加掃開發工具之開關、`updateList` 隨之只剩正式相依樹.
 
 背景(實測,2026-10-30):syft 之 `javascript-lock-cataloger` 預設不收 `package-lock.json` 中標 `"dev": true` 者,但 `pe-binary-package-cataloger`、`go-module-binary-cataloger` 掃描安裝所得之檔案,不分正式或開發用——全量安裝時開發用套件所附之執行檔(vite 帶入之 `@esbuild/win32-x64/esbuild.exe`→ Go 標準庫 59 筆;`clipboardy/fallbacks/windows/clipboard_*.exe`)仍被編入 SBOM,範圍不一致.
 

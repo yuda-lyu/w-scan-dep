@@ -119,7 +119,7 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 - **`--omit=dev` 實測行為**：①`package-lock.json` 仍寫出完整相依樹（開發用者標 `"dev": true`），只是不下載、不落地，故 syft 之 lock 編目器收錄清單與全量安裝完全相同（真實驗收 57 項＝57 項）；②同時為正式套件之對等相依或相依者照裝，且版本為 `devDependencies` 所釘（`vue` 3.5.44 兩邊相同）；③安裝較快、較小（驗收專案 49→17 個頂層目錄，syft 掃描 126→8.5 秒〔前者含防毒首次讀取，不宜當效能結論〕）；④`npm ls <名> --json` 在缺少 devDependencies 之樹上仍回有效 JSON、無需 log 警告。
 - **`--omit=peer` 的變異在「對等相依亦列於 devDependencies」之夾具下不會被抓到**：該節點同時有 dev 與 peer 兩種來源（`devOptional` 類），`--omit=dev --omit=peer` 下仍被安裝；夾具須另有「只是正式套件之對等相依、未列於 devDependencies」者（`peer-only`）才擋得住（M2 第一次存活、補夾具後被抓）。
 - **「不誤傷」案修前也綠**（`api-scanScope` 的「npm 套件即正式相依樹」、`api-installScope` 的「正式相依樹照收」）：它們守的是修正不得多刪，不是修前紅案，報告不計入「修前紅」。反例用 M8（全量安裝後依名稱刪 `devDependencies` 所列者）證明其必要：只列於開發樹之傳遞相依刪不掉、同時為正式套件相依者（`term-size`、`peer-fw`）被誤刪。
-- **本機 `E:` 槽不存在**（2026-10-30）：建議檔所指 cgsmdb 專案（`E:\prliq\…`）不可讀；真實驗收以替身 `package.json`（`sharp`、`term-size`、`vue-router` 為正式；`vite`、`clipboardy`、`vue` 為開發；腳本 `./tmp/run01/real-accept.mjs`，已清）同形態驗證，未動 cgsmdb 之任何檔。
+- **本機 `E:` 槽不存在**（2026-10-30）：建議檔所指使用端專案（`<使用端專案路徑>`）不可讀；真實驗收以替身 `package.json`（`sharp`、`term-size`、`vue-router` 為正式；`vite`、`clipboardy`、`vue` 為開發；腳本 `./tmp/run01/real-accept.mjs`，已清）同形態驗證，未動使用端之任何檔。
 - **本機假 registry 自組 tarball**：`test/tools/fakeNpmRegistry.mjs` 以 ustar 標頭＋`zlib.gzipSync` 現組 `.tgz`（內容一律在 `package/` 下），packument 提供 `dist.tarball`／`shasum`／`integrity`；真實 npm 對 `npm_config_registry=http://127.0.0.1:<埠>/` 照常安裝（`--no-audit` 下不打 advisories 端點）。`npm_config_cache` 須改指本案暫存夾，否則吃到本機快取。npm 12.1.0 會印 `install-scripts … blocked` 警告（含 `sharp`、`esbuild`），不影響 `exit 0`。
 - **修前紅不用 stash**：直接把 `src/install.mjs` 之 `NPM_INSTALL_ARGS` 暫改回修前值（單行），跑新測試得紅後以 Edit 還原，再以 `git diff -- src/install.mjs` 回驗只剩預期變更；其餘變異同法（每次還原後回驗 diff）。
 
