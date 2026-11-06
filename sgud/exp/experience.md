@@ -149,3 +149,15 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 - 變異證明時暫改 `.npmignore`（加 `sgud`、`test/tools`、刪 `CLAUDE*.md`／`tmp`／`.env`）或暫放假 `.dll`，每次改完立即還原並以 `npm pack --dry-run` 清單與修前逐行 diff 確認一致；`tmp/` 規則的變異會讓 `./tmp/` 下的 quiet-run 日誌也入包，是預期的紅。
 - quiet-run 以 cmd 執行指令，`node_modules/.bin/mocha` 這種 POSIX 相對路徑會報「不是內部或外部命令」，單檔改用 `node node_modules/mocha/bin/mocha.js --no-parallel <檔> --timeout 180000`。
 - 全套測試中 `npm error code E404`／`EJSONPARSE` 等輸出是 `api-npmRegistry`／`api-npmInstall` 的負向案例（假 registry、壞 `package.json`），不是失敗。
+
+## 報告用語由呼叫端傳入（2026-11-06，任務 20261106102000 sd330，排程第 330 項）
+
+- **第三參數由「一律拒收」改為接受 `opt`**（先前 `opt` 整個移除，見上文〈`opt` 整個移除〉）：報告用語只能由呼叫端傳入，環境變數不適合（多行 markdown 說明）、新增具名匯出會改變 UMD 形態（E2），故沿用第三參數；`opt.fdTools` 仍為已移除之鍵（V6，給了或取值拋錯皆 reject），舊呼叫端不會靜默被忽略。
+- **golden 取自修前 HEAD，系統名不手打**：`git archive HEAD src` 解到 `./tmp/`，用舊 `buildReport` 以共用夾具（`test/tools/reportFixture.mjs`）產出，再以正規式自舊原始碼取出系統名（`進行(.+?)之依賴套件掃描` 等）代換為假名「範例系統」；腳本與舊碼都在 `./tmp/`，結案清除。如此「等價」是機械證明的，且真實名稱不進任何入庫檔案。
+- **「不含特定系統」的測試別用名稱黑名單**：黑名單（如某幾個詞）攔不到其他名稱。改為兩層：①預設報告與預設說明不含「系統」二字（任何系統名幾乎都帶此詞；掃描目標路徑一行排除，因其為本機路徑）；②預設報告與修前 golden 之差異恰為白名單 4 行（全文釘住，新增任何特定用語都會失敗）。
+- **預設說明只留通用事實**：`PACKAGE_NOTES.vue` 移除「目前某系統使用之版本」「須大規模重構才能升 vue3」兩句（使用端的現況與規劃），保留 Vue2 已知漏洞表與「vue2 最新版為 2.7.16」。使用端以 `packageNotes.vue` 傳回原句即還原。
+- **README 還原範例要可執行**：範例以 `<!-- restore-example:start/end -->` 標記，`test/unit-readmeRestore.test.mjs` 取出 `const opt = {…}`，以 `vm.runInNewContext` 求值、代稱「某系統」換為「範例系統」後比對 golden。範例改動而不再等價時測試會紅。
+- **編輯工具會把 U+2028、U+2029 之逸出寫法（反斜線加 u2028、u2029）轉成實際字元**（含寫在註解、字串、正規式內者；U+3000 之逸出寫法亦被轉）：結果是正規式 `Unterminated regular expression`、字串 `no-multi-str`、`//` 註解被截斷。其他逸出（如 U+0085、U+007F、U+0000）不受影響。處置：以 `String.fromCharCode(0x2028)` 寫腳本換回；原始碼內改用碼位迴圈（`codePointAt`）判斷控制字元，不用含控制字元之正規式（亦避開 `no-control-regex`）。
+- **async `funLog` 回傳 rejected promise 須吞掉**：初版變異（移除 `r.then(undefined, () => {})`）存活，因測試只斷言「不拋錯」；rejection 在下一個 tick 才成為 `unhandledRejection`。補測試：在 `process.on('unhandledRejection')` 掛監聽、讓出兩次 `setImmediate` 後斷言未發生（否定斷言，短暫觀察窗）。
+- **獨立審查（sonnet，唯讀）有用之發現**：①`dist/`、`docs/dist/` 仍含舊字樣（發布流程重產，本輪不手動重產，見 state.md）；②sgud 內「不接受第三參數」之敘述須同步（已改）；③「單行」只擋 CR／LF，U+2028／U+0085／NUL 通過（已擴為控制字元）；④`fdTools` 存取器拋錯被當成「未給」而放行（已改為拒絕）；⑤`funLog` 非函數時 debug 不警告（已補）；⑥中立第 1 點「使用 syft 掃描安裝依賴」可被讀成「掃描並安裝」（改為「掃描已安裝之依賴」）。未採：不跳脫 markdown／HTML（說明本即呼叫端自撰之 markdown，原預設說明就含 `<br>`；改於 README 註明）；README 範例與測試保留去名後的 vue 現況句（派工要求還原範例並以 golden 證明逐字等價）。
+- 全套 `npm test` 本輪 359 通過（含真實掃描「test」案約 2 分鐘）；`mocha --parallel` 下各檔獨立，`unit-readmeRestore` 讀 README、`unit-binManifest` 跑 `npm pack`，測試進行中不要改 README／sgud。

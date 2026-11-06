@@ -14,6 +14,7 @@
 | R-SCAN-TIMEOUT-01 | syft、grype、osv-scanner 之單次時限與逾時之樹狀結束(Gitea #24 三之同類;主控裁定 2026-10-30 run02) | 本檔 |
 | R-EXSBOM-PORT-01 | ex-sbom 服務埠之監聽者之身分確認改用 wsemi `execProcessPortPidsSync`(useBoth),不自行解析 netstat;選埠全表快照之 netstat 解析不看狀態欄(2026-10-30 run03,wsemi 1.9.32 報告 §6 第 3 列) | 本檔 |
 | R-NPM-REGISTRY-01 | 隔離安裝沿用呼叫端專案之倉庫位址設定:於 `fpIn` 所在資料夾取 `npm config list --json` 之生效 `registry` 與 `@scope:registry`,寫入 `fdOut/test/.npmrc`;只帶位址、不帶 include 等安裝集合設定與認證值;取得失敗拋錯(主控提出,Gitea #27 run02 之範圍外發現,2026-10-30 任務 20261030174519 run01) | 本檔 |
+| R-REPORT-TEXT-01 | 報告用語由呼叫端傳入:預設文字與預設套件說明中立(不含使用端之系統名、專案名、計畫名與其現況規劃);`opt.systemName`、`opt.packageNotes`(新增或覆寫套件說明)、`opt.debug`、`opt.funLog`;輸入檢測依 dspec〈輸入參數之檢測機制〉(排程第 330 項,使用者 2026-11-06 裁定) | 本檔 |
 | R-SCAN-SCOPE-01 | 掃描範圍只算 dependencies:隔離安裝 `npm install --omit=dev`、`result.json` 之 `scope`、`result.md`／`待更新套件.md` 之範圍說明、`updateList` 只剩正式相依樹、範圍不受呼叫端 npm 設定影響〔子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯〕(Gitea #27,使用者裁定,2026-10-30 run01、run02) | 本檔 |
 
 ## R-BIN-ENSURE-01 外部執行檔之存放、下載、校驗與離線
@@ -30,7 +31,7 @@
 4. **所啟動之執行檔一律為 `ensureBins` 回傳之路徑**(`<快取>/<sha256>/<檔名>`);執行期之資料交換檔不寫執行檔所在夾(ex-sbom 之工作目錄為 `fdOut/exsbom-work/<pid>-<6 碼>`,`src/exsbom.mjs`;scan 產物在 `fdOut/scan`).
 5. **工具取得先於 `npm install`**:取不到(離線無快取、校驗不符)即中止,不待安裝數分鐘後才失敗(`src/WScanDep.mjs` 之 `await ensureBins(…)`;其前只有 `W_NPM_INSTALL_TIMEOUT` 與三個掃描工具時限環境變數之格式驗證,見 R-NPM-TIMEOUT-01、R-SCAN-TIMEOUT-01).
 6. **快取位置不可在 `fdOut` 之 `test`/`pics`/`exsbom-work` 內**(`assertToolsOutside`,`src/layout.mjs:23`):`test` 為 syft 掃描目標,工具放其內會被編入 SBOM;`pics`、`exsbom-work` 每次清除.
-7. **`WScanDep` 不接受第三參數**(原 `opt.fdTools` 已移除,原則 14 不留相容層):傳入即 reject,訊息指向 `W_BIN_CACHE`.
+7. **`opt.fdTools` 已移除**(原則 14 不留相容層):`WScanDep` 之第三參數 `opt` 給了 `fdTools`(非 `undefined`／`null`,取值拋錯亦同)即 reject,訊息 `invalid opt.fdTools: removed, use env W_BIN_CACHE (see README 外部執行檔)`,指向 `W_BIN_CACHE`.(2026-11-06 起第三參數改為接受報告用語之選項 `systemName`、`packageNotes`、`debug`、`funLog`,見 R-REPORT-TEXT-01;原「第三參數一律 reject」不再成立,`opt` 不是一般物件時亦 reject.)
 8. **`floatingManifestUrl` 不轉傳**(清單信任錨為 GitHub 主幹,M5).
 9. rollup UMD 之 external/globals 含 `url`、`crypto`、`stream`、`stream/promises`、`os`(及 wsemi 所用之 `fs`、`path`、`child_process`),`toolg/gDistRollup.mjs`.
 
@@ -72,7 +73,7 @@
 | T7 | 同上 | 快取檔同長度竄改、截短→重新取得 |
 | T8 | 同上 | 主幹清單 404、非 JSON、schema 錯→用基準清單 |
 | 套件根與 cwd 無關、不轉傳 `floatingManifestUrl` | 同上 | 子行程於他處 cwd 載入;傳入非本 repo 之網址仍取標準主幹清單 |
-| 主函數類入口 | `test/api-wsdEntry.test.mjs` | 攔截全域 `fetch`(斷言除本機迴圈位址外未被呼叫)與 `child_process.spawn/spawnSync`(斷言啟動者為 `ensureBins` 回傳之快取路徑、工作目錄為 `exsbom-work`);取得先於 `npm install`(2026-10-29 起 npm install 經 `spawn`);快取在 `fdOut/test` 內被拒;第三參數被拒;靜態屬性匯出 |
+| 主函數類入口 | `test/api-wsdEntry.test.mjs` | 攔截全域 `fetch`(斷言除本機迴圈位址外未被呼叫)與 `child_process.spawn/spawnSync`(斷言啟動者為 `ensureBins` 回傳之快取路徑、工作目錄為 `exsbom-work`);取得先於 `npm install`(2026-10-29 起 npm install 經 `spawn`);快取在 `fdOut/test` 內被拒;`opt.fdTools` 與非一般物件之 `opt` 被拒(第三參數 `opt` 之報告用語見 R-REPORT-TEXT-01);靜態屬性匯出 |
 | 版本推得 | `test/unit-toolVersions.test.mjs` | 以 sha256 比對基準清單與主幹清單副本取得版本標籤;不符為 `unknown` |
 | 工具位置防呆 | `test/unit-layout.test.mjs` | `assertToolsOutside` |
 | 更新工具 | `test/unit-genBinManifest.test.mjs` | 本機假 GitHub API:標籤網址、checksums 與 API digest 雙重核對、`--only`/`--tag`、拒絕 draft/prerelease/無可核對來源 |
@@ -203,7 +204,7 @@
 ### 規則
 
 1. `npm install`(指令為 `npm install --omit=dev --no-audit --no-fund`,2026-10-30 起只裝正式相依樹,見 R-SCAN-SCOPE-01)只經 `src/install.mjs` 之 `npmInstall`(非同步 `spawn`,`shell:true`,`windowsHide`);逾時以 `taskkill /F /T /PID <cmd.exe>` 結束**整個子行程樹**(只結束 cmd.exe 時 npm 之 node 續跑),回驗子行程已結束後拋 `npm install 逾時(超過 … 未完成),已結束安裝子行程樹;可設環境變數 W_NPM_INSTALL_TIMEOUT(秒)調整時限`.等待、樹狀結束、環境變數解析之共用實作在 `src/proc.mjs`(`waitChild`、`killTree`、`timeoutMsFromEnv`;2026-10-30 自 install.mjs 抽出,與 R-SCAN-TIMEOUT-01 共用).
-2. 時限只由環境變數 `W_NPM_INSTALL_TIMEOUT`(秒,正數,至多 2147483——超過 2^31-1 毫秒時 `setTimeout` 會改為 1 毫秒)調整;`WScanDep` 不接受第三參數(R-BIN-ENSURE-01 規則 7).預設 1200 秒(實測 2000 套件約 4 分鐘,取約 5 倍).值不合法時於任何下載與寫入前拋錯(`src/WScanDep.mjs` 開頭之 `npmInstallTimeoutMs()`),不靜默改用預設.逾時後等子行程結束之計時器於結束時清除(不拖住呼叫端結束);taskkill 失敗時至少結束 cmd.exe,訊息寫「未確認成功」.
+2. 時限只由環境變數 `W_NPM_INSTALL_TIMEOUT`(秒,正數,至多 2147483——超過 2^31-1 毫秒時 `setTimeout` 會改為 1 毫秒)調整;`WScanDep` 之 `opt` 不含時限選項(只有報告用語,R-REPORT-TEXT-01).預設 1200 秒(實測 2000 套件約 4 分鐘,取約 5 倍).值不合法時於任何下載與寫入前拋錯(`src/WScanDep.mjs` 開頭之 `npmInstallTimeoutMs()`),不靜默改用預設.逾時後等子行程結束之計時器於結束時清除(不拖住呼叫端結束);taskkill 失敗時至少結束 cmd.exe,訊息寫「未確認成功」.
 3. 非 0 結束之訊息維持 `npm install 失敗(exit N)`.
 
 ### 盤點指令與站點全集
@@ -229,7 +230,7 @@
 ### 規則
 
 1. 三工具只經 `src/scan.mjs` 之 `run` → `src/proc.mjs` 之 `runTool`(非同步 `spawn`,不經 shell,`stdio: ['ignore','pipe','pipe']`,`windowsHide`;stdout/stderr 以 Buffer 收集後 utf8 解碼,上限 64 MB,超過結束子行程並拋 `<工具> 執行錯誤: 輸出超過 … 位元組`;`spawn` 同步拋錯與 `error` 事件同樣包成 `<工具> 執行錯誤: …`).以 `exit` 判定結束(已結束者不再 taskkill,避免對已被重用之 PID 動手),其後最多再等 2 秒讓輸出串流收尾(子孫行程仍握著管道時不無限等).不得再用 `spawnSync`(`spawnSync` 之 `timeout` 只結束直接子行程、且阻塞事件迴圈).`runSyft`、`runGrype`、`runOsv`、`runScan` 因而為非同步(`runSyft` 原為同步函式,深層匯入者須 `await`).
-2. 時限為**單次執行**(osv-scanner 對 markdown 與 json 各跑一次,各自計時),由環境變數(秒,十進位正數〔可含小數、指數;不收 `0x10` 等進位寫法〕,換算後至少 1 毫秒、至多 2147483 秒;與 `W_NPM_INSTALL_TIMEOUT` 同風格,共用 `timeoutMsFromEnv`)各自調整:`W_SYFT_TIMEOUT`(預設 3600)、`W_GRYPE_TIMEOUT`(預設 1800)、`W_OSV_SCANNER_TIMEOUT`(預設 600).值不合法時於任何下載與寫入前拋錯(`WScanDep` 開頭之 `scanTimeoutsMs()`,與 `npmInstallTimeoutMs()` 同處),不靜默改用預設;`WScanDep` 不接受第三參數(R-BIN-ENSURE-01 規則 7).`runSyft`/`runGrype`/`runOsv` 之末參數 `timeoutMs` 與 `runScan` 之 `timeouts` 供內部與測試傳入(未傳時讀該工具自己的環境變數,不讀他工具的).
+2. 時限為**單次執行**(osv-scanner 對 markdown 與 json 各跑一次,各自計時),由環境變數(秒,十進位正數〔可含小數、指數;不收 `0x10` 等進位寫法〕,換算後至少 1 毫秒、至多 2147483 秒;與 `W_NPM_INSTALL_TIMEOUT` 同風格,共用 `timeoutMsFromEnv`)各自調整:`W_SYFT_TIMEOUT`(預設 3600)、`W_GRYPE_TIMEOUT`(預設 1800)、`W_OSV_SCANNER_TIMEOUT`(預設 600).值不合法時於任何下載與寫入前拋錯(`WScanDep` 開頭之 `scanTimeoutsMs()`,與 `npmInstallTimeoutMs()` 同處),不靜默改用預設;`WScanDep` 之 `opt` 不含時限選項(只有報告用語,R-REPORT-TEXT-01).`runSyft`/`runGrype`/`runOsv` 之末參數 `timeoutMs` 與 `runScan` 之 `timeouts` 供內部與測試傳入(未傳時讀該工具自己的環境變數,不讀他工具的).
 3. 預設依實測訂定(2026-10-30,真實專案 1364 個元件、865 個頂層套件):
 
    | 工具 | 實測 | 預設 | 倍數(對實測最大值) |
@@ -271,7 +272,7 @@
 
 1. **隔離安裝只裝正式相依樹**:`fdOut/test` 之安裝只經 `src/install.mjs` 之 `npmInstall`,指令為 `npm install --omit=dev --no-audit --no-fund`(常數 `NPM_INSTALL_ARGS`)——其餘旗標與 R-NPM-TIMEOUT-01 之時限不變.**不得移除 `--omit=dev`**;**不得加 `--omit=peer`／`--omit=optional`**(正式套件之對等相依與選用相依屬正式相依樹;fixture 之 `peer-only` 擋 `--omit=peer`);**不得改為全量安裝後依名稱刪除 `devDependencies` 所列者**(同時為正式套件之相依者會被誤刪,如 `vue` 為 `vue-router` 之對等相依、`term-size` 為 `boxen` 之相依而亦列於 `devDependencies`;且只列於開發樹之傳遞相依刪不掉).
 2. **同時為正式套件之相依者照收**(實測 npm 行為):`devDependencies` 與正式套件之 `peerDependencies`／`dependencies` 重疊者,`--omit=dev` 下仍安裝,且版本為 `devDependencies` 所釘者(與全量安裝相同,SBOM 內之 npm 套件版本不變).
-3. **不提供「掃描開發工具」之開關**(使用者明示不需要;專案原則 14,需要時另議):`WScanDep` 無第三參數(R-BIN-ENSURE-01 規則 7),無環境變數.
+3. **不提供「掃描開發工具」之開關**(使用者明示不需要;專案原則 14,需要時另議):`WScanDep` 之 `opt` 無此選項(只有報告用語,R-REPORT-TEXT-01;`opt.fdTools` 已移除,R-BIN-ENSURE-01 規則 7),無環境變數.
 4. **範圍欄位與說明**:`result.json` 頂層 `scope: 'dependencies'`(`src/config.mjs` 之 `SCAN_SCOPE`),鍵序為 `date, source, outputDir, scope, tools, osv, grype, exsbom, updateList`(頂層新增一鍵,屬破壞性變更,README〈Breaking changes〉已列);`result.md`〈掃描資訊〉與 `待更新套件.md` 標頭各一行「- 掃描範圍：」＋`SCAN_SCOPE_NOTE`(後者另加「本清單之引入路徑亦只含正式相依樹」);`WScanDep` 之 JSDoc 與 README〈掃描範圍〉說明範圍與理由.
 5. **`updateList` 只剩正式相依樹**(讀碼確認,未改 `src/updatelist.mjs` 之演算法):`computeUpdateList` 之風險葉套件取自 osv／grype 結果與 ex-sbom 截圖(皆源自 syft 對 `fdOut/test` 之 SBOM),引入路徑取自 `fdOut/test` 之 `npm ls <名> --json`(`src/updatelist.mjs` `npmLs`/`findPaths`)——僅及 `node_modules` 內已安裝者;缺少 `devDependencies` 時 `npm ls` 仍回有效 JSON(實測 `api-installScope` 的 `logs` 為空).故開發工具不再出現在引入路徑.
 6. **已知殘留(刻意)**:`fdOut/test/package-lock.json` 仍含開發用套件之解析結果(`"dev": true`;`npm install --omit=dev` 仍解析並寫出完整相依樹,只是不下載、不落地),syft 之 lock 編目器預設跳過;grype／osv-scanner 吃 SBOM(`-L`／`sbom:`)不讀 lock.
@@ -363,3 +364,52 @@ M0 = run01 之碼(不傳環境副本且無驗證)12 案紅;M1 不移除環境變
 ### 變異(2026-10-30 run01;腳本副本 `C:\opensrcOper\dnow\20261030174519\agent-out\run01-evidence\mutate.mjs`)
 
 對照組(BASE)unit 25／api 21／entry(`-g registry`:新案 10＋既有 1)11 全綠;M0~M17 共 18 個變異皆被抓到(紅案數):M0 = 修前(`WScanDep` 不查詢、不寫 `.npmrc`)9;M1 只帶 `registry`、不帶 `@scope:registry` 16;M2 `.npmrc` 多帶 `include[]=dev` 13;M3 不去除網址內嵌帳密 3;M4 執行 npm config 失敗靜默退回預設 3;M5 忽略離開碼非 0 2;M6 離開碼非 0 之訊息附 stderr 2;M7 輸出非 JSON 之訊息附 stdout 5;M8 於錯誤目錄(`process.cwd()`)查詢 6;M9 不先刪既有 `.npmrc`、改附加寫入 3;M10 時限變數名稱錯 9;M11 npm 未列出 registry 不拋錯 3;M12 查詢但不寫檔 5;M13 `.npmrc` 值不加引號 1;M14 放行非 http(s) 網址 4;M15 `WScanDep` 吞掉查詢失敗 4;M16 `runTool` 不傳 `cwd` 12;M17 不標出被去除帳密之鍵 2.腳本每次還原並回驗位元組全等.
+
+## R-REPORT-TEXT-01 報告用語由呼叫端傳入(公開套件不得寫死使用端之系統名與現況)
+
+來源:主控立案(排程第 330 項,任務 20261106102000 sd330);使用者 2026-11-06 裁定:公開 repo 不得含使用端之專案名、計畫名與業主字樣,要清除並守門.守門名單在主控私有處,不入本庫(本庫看不到名單).輸入檢測依 `C:\opensrcOper\dspec\輸入參數之檢測機制.md`(K1 種類由程式碼宣告、K3 非預期之 opt 視為未給、V4 opt 本身、V5 各鍵、V6 已移除之鍵、V7 未宣告之鍵、V9 不改寫、V11 每鍵讀一次、K9/V20 不回顯值).
+
+### 規則(程式碼須長成什麼樣)
+
+1. **預設文字中立**:`src/`(含 `config.mjs` 之 `PACKAGE_NOTES`、`report.mjs` 之固定句、註解與 JSDoc)、`README.md`、`test/`、`sgud/` 不得出現特定使用端系統/專案/計畫之名稱,也不得寫使用端之現況與規劃(目前使用之版本、升版規劃).預設套件說明只留通用事實(漏洞名稱、CVSS、觸發條件、情境、套件本身之現況).測試需要系統名時一律用中立假名「範例系統」,README 範例用「某系統」.
+2. **`opt.systemName`**(S1 單行非空白字串;前後空白去除後使用;含換行或其他控制字元〔tab 除外〕、非字串、包裝物件、空白者視為未給):代入 `result.md`〈一、依賴套件掃描技術〉兩處——首句「進行{名}之依賴套件掃描」(`src/report.mjs:60`)與第 1 點「使用 syft 掃描{名}安裝依賴」(`:63`);未給時用中立說法「進行依賴套件掃描」「使用 syft 掃描已安裝之依賴」.
+3. **`opt.packageNotes`**(O1 一般物件:套件名 → `{ heading?, body }`):與預設說明合併(`mergePackageNotes`,`src/scanOpt.mjs:112`)——套件名相同者覆寫(位置不變),不同者新增於預設說明之後;`body` 必給且為非空白字串(否則該筆忽略),`heading` 選給且為單行非空白字串(否則覆寫沿用預設標題、新增用「【套件名 套件說明】」);原樣輸出、不跳脫;不改動預設說明與呼叫端之物件;以 `__proto__`、`constructor` 為鍵不污染原型(結果物件原型為 null).被 osv-scanner、grype 或 ex-sbom 任一標注之套件才顯示(`src/report.mjs:149`).
+4. **輸入檢測集中於 `parseWsdOpt`**(`src/scanOpt.mjs:147`),為 `WScanDep` 第一句(`src/WScanDep.mjs:159`,先於任何下載、讀 npm 設定與寫入;`WScanDep` 為 async,故為 reject):`opt` 為 `undefined`／`null` 視為未給;其他非一般物件(判定:`Object.prototype.toString` 為 `[object Object]` 且原型為 null 或原型之原型為 null,跨 realm 有效;陣列、`Date`、`Map`、class 實例、函數、包裝物件、模組命名空間、已撤銷之 Proxy 皆否)拋 `invalid opt: must be a plain object`;`opt.fdTools`(已移除之鍵)給了或取值拋錯拋 `invalid opt.fdTools: removed, use env W_BIN_CACHE (see README 外部執行檔)`;其餘鍵給了而非預期者視為未給、改用預設,不報錯;未宣告之鍵忽略;每鍵只讀一次(取值拋錯視為無效);不改寫 `opt`.
+5. **`opt.debug === true`**(其他值視為 false)時,非預期之選項另警告:固定詞彙、不含傳入之值與鍵名、同一原因每行程一次(`resetWarned()` 供測試重設);出口為 `opt.funLog(msg, info)`(函數;拋錯與回傳 rejected promise 皆吞掉),否則 `console.warn`;`funLog` 非函數時以 `console.warn` 警告該鍵.
+6. **等價**:給與原本等價之 `systemName` 與 `packageNotes.vue` 時,`result.md` 逐字等於修前產出(golden 取自修前 HEAD 之 `buildReport` 以同一夾具之產出,系統名代換為「範例系統」).`result.json`、`待更新套件.md`、輸出檔名與報告章節結構不受影響.
+7. **不用 `opt` 傳入時限或掃描範圍**:時限仍只經環境變數(R-NPM-TIMEOUT-01、R-SCAN-TIMEOUT-01),掃描範圍無開關(R-SCAN-SCOPE-01).
+8. 打包產物 `dist/`、`docs/dist/`、`docs/` 為發布流程(`script.txt`:`cleanFolder` → `jsdoc` → `gDistRollup` → `genDocsDist`)自動重產,不手改;2026-11-06 修正時 `dist/`、`docs/dist/` 仍為舊產物(含舊預設文字),由發布流程重產後才中立.以新 `src/` 另編至暫存目錄之 UMD 已驗證可打包、default 匯出與靜態屬性 `ensureBins` 不變、第三參數檢測在 bundle 內生效且不含舊字樣.
+
+### 盤點指令與站點全集
+
+| 盤點指令(可重跑) | 預期 | 判準 |
+| --- | --- | --- |
+| Grep `systemName\|packageNotes` 於 `src/` | `scanOpt.mjs`(檢測與合併)、`report.mjs`(代入)、`WScanDep.mjs`(傳遞與 JSDoc) | 已套 |
+| Grep `PACKAGE_NOTES` 於 `src/` | 定義 `config.mjs:41`;使用 `report.mjs` 一處(經 `mergePackageNotes`) | 已套(預設說明不被直接改動) |
+| `node node_modules/mocha/bin/mocha.js --no-parallel test/unit-reportOpt.test.mjs`,其中「未給選項…不含任何『系統』字樣」「…差異恰為…」二案 | 預設報告與預設說明不含「系統」二字,且與修前產出之差異恰為白名單 4 行 | 已套(全文釘住,新增任何特定系統用語都會失敗) |
+| Grep `parseWsdOpt(` 於 `src/` | 定義 `scanOpt.mjs:147`;使用 `WScanDep.mjs:159` 一處,在任何下載與寫入之前 | 已套 |
+| 守門(主控私有名單掃描整個 repo) | 無命中 | 由主控發布前掃描;本庫自檢只能以上列「系統」字樣測試與 Grep 殘留 |
+
+### 對應測試
+
+| 項目 | 測試檔 | 說明 |
+| --- | --- | --- |
+| 預設中立(規則 1) | `test/unit-reportOpt.test.mjs`〈predefined text is neutral〉 | 兩處中立說法;報告與預設說明皆不含「系統」;預設 vue 說明保留通用事實(Vue2 已知漏洞表)而無使用端現況與規劃;與修前產出之差異恰為白名單 4 行;章節結構與修前相同 |
+| systemName(規則 2) | 同檔〈systemName〉 | 代入兩處且其餘不變;去前後空白;截圖失敗亦代入;16 種非預期值(含換行、U+2028、NUL、DEL、包裝物件)視為未給 |
+| packageNotes(規則 3) | 同檔〈packageNotes〉 | 新增(順序在預設之後)、未標注者不顯示、heading 預設、覆寫(位置不變)、只給 body 沿用預設標題、非預期 heading/entry/packageNotes 之退回預設、`Object.create(null)`、getter 拋錯、`__proto__`、預設與傳入物件不被改動(凍結物件)、原樣輸出 |
+| 等價(規則 6) | 同檔〈equivalent to the current report〉、`test/unit-readmeRestore.test.mjs`、golden `test/fixtures/report-restored-{ok,ng}.golden.md`、夾具 `test/tools/reportFixture.mjs` | 截圖成功與失敗兩種報告逐字等於修前產出;README 之還原範例(`restore-example` 標記間)取出後代換為中立假名,通過檢測且產出同一份 golden |
+| opt 檢測(規則 4、5) | `test/unit-scanOpt.test.mjs` | opt 本身(4 種視為未給、15 種無效含模組命名空間與 `Symbol.toStringTag` 偽裝)、`fdTools`(7 種值與取值拋錯)、各鍵正規化、getter/Proxy 拋錯、每鍵只讀一次、跨 realm 物件、不改寫(凍結)、`__proto__`、debug 警告(固定詞彙、不含值與鍵名、去重、funLog 路徑、async funLog 不成為 unhandledRejection) |
+| WScanDep 層(規則 4、6) | `test/api-wsdEntry.test.mjs`「should reject opt.fdTools…」「should write neutral wording…」、`test/WScanDep.test.mjs`「opt.fdTools 已移除…」 | 無效 `opt` 於任何下載與寫入前 reject(`calls`、`cfgCalls`、`netCalls` 為空,`fdOut` 不被建立);未給、`{}`、`null` 之 `result.md` 逐字相同且中立;給了則代入並附自訂說明;`result.json`(除輸出路徑)與 `待更新套件.md` 不變 |
+
+### 變異(2026-11-06 sd330;腳本 `tmp/sd330/mut.mjs`〔已清理〕)
+
+對照組:`unit-reportOpt`＋`unit-scanOpt`＋`unit-readmeRestore` 134 通過(含 `unit-report` 為 140)、`api-wsdEntry` 受影響案 2 通過.34 個變異皆被抓到(紅案數):系統名被忽略 7、第 1 點未代入 7、首句漏「之」6、呼叫端說明被忽略 15、預設說明丟失 11、自訂不覆寫預設 9、新增標題錯 5、單行檢查移除 17、控制字元只擋 CR/LF 10、漏擋 U+0085 2、純空白被接受 1、系統名未去空白 3、空白 body 被接受 3、一般物件判定全收 2、移除 toString 判定 2、`fdTools` 不拒絕 8、`fdTools` 取值拋錯被放行 1、非一般物件之 `opt` 被接受 15、`debug` 恆 true 1、警告回顯值 5、警告去重移除 1、`funLog` 非函數不警告 1、rejected promise 未吞 1(初版存活,補「不成為 unhandledRejection」案後被抓)、預設說明被改寫 30、預設 vue 回到含現況句式 5、通用事實缺一列 3、系統名未檢測 14、說明順序顛倒 5、無效 entry 不警告 1、heading 不檢單行 3、heading 非預期不計警告 1、中立第 1 點退回含混寫法 3、`WScanDep` 未傳選項 1、未檢測 `opt` 2.每次還原並以 sha256 與快照回驗.
+
+### 已知限制
+
+- **公開庫之歷史與已發布版本**:git 歷史中修前之 commit 與已發布之 npm 版本仍含舊預設文字,本次修正無法消除(不在 `sgud/` 與程式碼範圍).
+- **`dist/`、`docs/dist/`** 見規則 8:發布流程重產前仍為舊產物.
+- **不跳脫**:`systemName`、`heading`、`body` 原樣輸出,`result.md` 若以網頁渲染須由呼叫端保證內容可信.
+- **報告輸出前之換行壓縮**(既有行為):連續 3 個以上換行壓為 2 個,含說明內文.
+- **`業主` 一詞**(`src/report.mjs:46`「供業主查核」、README 與 `sgud/proc/process.md` 之說明)為通用角色詞,未改(改動會使「給與原本等價之選項時報告逐字相同」不成立);是否視為使用端字樣由主控裁定.
+- 預設 xlsx 說明為既有行為(無條件稱被標注之 xlsx 為誤報),未改.

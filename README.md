@@ -73,6 +73,73 @@ test()
 
 > 僅支援 Windows：掃描工具（syft / grype / osv-scanner / ex-sbom）為 Windows 版執行檔。
 
+## 報告用語(系統名與套件說明)
+
+本套件為公開套件，`result.md` 之預設文字**不提任何特定系統之名稱與現況**；專案自己的用語(系統名、各套件之補充說明)由呼叫端以第三參數 `opt` 傳入：
+
+```js
+import wsd from 'w-scan-dep'
+
+let r = await wsd(fpIn, fdOut, {
+    systemName: '某系統',
+    packageNotes: {
+        semver: { heading: '【semver 套件說明】', body: '某系統之 semver 說明…' },
+    },
+})
+```
+
+| 選項 | 型別 | 預設 | 說明 |
+|---|---|---|---|
+| `systemName` | 字串(單行、非空白) | `''` | 報告內文中的系統名，前後空白去除後代入〈一、依賴套件掃描技術〉之兩處(下表)。未給或非預期時用中立說法，不提任何系統名 |
+| `packageNotes` | 物件：套件名 → `{ heading, body }` | `{}` | 套件說明。被 osv-scanner、grype 或 ex-sbom 任一標注之套件有對應說明時，附於 `result.md` 結尾。`body` 必給(markdown，非空白字串；缺或非預期則該筆忽略)；`heading` 選給(單行非空白字串)，未給時覆寫沿用該套件之預設標題、新增則為「【套件名 套件說明】」。與預設說明合併：套件名相同者**覆寫**該套件之預設說明(位置不變)，不同者**新增**於預設說明之後(新增者之先後依 JavaScript 物件之鍵序，整數形式之套件名會排在前面) |
+| `debug` | 布林 | `false` | `true` 時，上列選項(含 `funLog`)給了而非預期者另輸出警告(固定詞彙、不含傳入之值，同一原因每行程一次) |
+| `funLog` | 函數 `(msg, info)` | `null` | `debug` 為 `true` 時之警告出口；未給用 `console.warn` |
+
+`systemName` 代入之位置(其餘文字不受影響)：
+
+| 位置 | 未給(中立說法) | 給了 `systemName: '某系統'` |
+|---|---|---|
+| 〈一、依賴套件掃描技術〉首句 | `基於「SBOM 開源工具使用說明」所提及之工具進行依賴套件掃描：` | `基於「SBOM 開源工具使用說明」所提及之工具進行某系統之依賴套件掃描：` |
+| 〈一、依賴套件掃描技術〉第 1 點 | `1. 使用 syft 掃描已安裝之依賴` | `1. 使用 syft 掃描某系統安裝依賴` |
+
+`systemName`、`heading`、`body` 原樣輸出，**不跳脫** markdown 或 HTML(視為呼叫端自己撰寫之報告文字；`result.md` 若以網頁渲染，請勿放入不可信之內容)；「單行」指不含換行及其他控制字元(tab 除外)。報告輸出前會把連續 3 個以上之換行壓為 2 個(含說明內文)。
+
+預設之套件說明只含通用事實：`xlsx`(SheetJS 之現況與 osv-scanner 誤報之原因)、`vue`(Vue2 已知漏洞表：ReDoS、XSS via prototype pollution 之 CVSS、觸發條件與情境)。特定系統目前用哪個版本、何時升版等**現況與規劃不在預設內**，需要時由呼叫端以 `packageNotes` 提供。
+
+輸入檢測(依 dspec〈輸入參數之檢測機制〉)：`opt` 可省略(`undefined`、`null` 視為未給)；其各選項給了而非預期者(如 `systemName` 非字串或含換行、`packageNotes` 非一般物件、說明項缺 `body`)視為未給、改用預設，不報錯(`debug: true` 時警告)；未列於上表之鍵忽略。`opt` 不是一般物件(字串、陣列、`Date`、`Map`、class 實例等)，或給了已移除之 `opt.fdTools`，於任何下載與寫入前 reject。`result.json`、`待更新套件.md`、輸出檔名與 `result.md` 之章節結構皆不受這些選項影響。
+
+### 還原成升版前那份報告之措辭
+
+升版前之預設文字內含使用端之系統名與 vue 之使用現況與升版規劃。使用端要還原成原本那份報告之措辭，把自己的用語以選項傳入即可(下例以「某系統」代稱，請代入自己的系統名；範例內出現系統名的兩處不必相同，可依自己原本的用語分別寫)：
+
+<!-- restore-example:start -->
+```js
+const opt = {
+    systemName: '某系統',
+    packageNotes: {
+        vue: {
+            heading: '【vue 套件/框架說明】',
+            body: [
+                '目前某系統都使用 vue（2.7.16），此為 vue2 最新版。其被提報之漏洞主要是中低風險漏洞，詳情如下表 1：',
+                '',
+                '表 1 Vue2 已知漏洞',
+                '',
+                '| 漏洞 | 觸發條件 | 情境 |',
+                '| --- | --- | --- |',
+                '| **ReDoS**<br>CVSS：3.7（Low） | 攻擊者需能注入惡意 Vue 模板 | **幾乎不受影響**：模板是開發者寫的，使用者無法控制 |',
+                '| **XSS via prototype pollution**<br>CVSS：4.2（Medium） | 需先有 prototype pollution 入口 | **風險低**：除非其他依賴有 prototype pollution 漏洞可串聯 |',
+                '',
+                '若欲修復此 2 漏洞，仍須待之後進行大規模之底層重構，才有辦法讓某系統由 vue2 升 vue3 版。',
+            ].join('\n'),
+        },
+    },
+}
+let r = await wsd(fpIn, fdOut, opt)
+```
+<!-- restore-example:end -->
+
+`xlsx` 之預設說明未變，不必傳入。`test/unit-readmeRestore.test.mjs` 會取出上列範例，以中立假名代換「某系統」後逐字比對修前產出之 golden(`test/fixtures/report-restored-*.golden.md`)，確保範例可行。
+
 ## 外部執行檔
 
 本套件執行時需要下列外部執行檔，不含於 npm 包，皆為廠商於其 GitHub Releases 發布之 Windows 版：
@@ -97,6 +164,12 @@ test()
 - 更新工具版本(維護者，需連網)：`node toolg/genBinManifest.mjs`(`--dry-run` 只列差異、`--only syft,grype`、`--tag syft=v1.55.0`)，查各廠商最新版、下載資產與 checksums 並核對後寫入 `bin/manifest.json`，推 GitHub 主幹即生效。
 
 ## Breaking changes
+
+### 報告預設文字改為中立，系統名與套件說明由呼叫端傳入(2026-11-06)
+
+- **`result.md` 之預設文字不再含特定系統之名稱與現況**：〈一、依賴套件掃描技術〉之「進行…之依賴套件掃描」「使用 syft 掃描…安裝依賴」兩處原內含使用端之系統名，改為中立說法(「進行依賴套件掃描」「使用 syft 掃描已安裝之依賴」)；預設之 `vue` 說明移除使用端目前使用之版本與升版規劃之句子，只留通用事實(Vue2 已知漏洞表，及「vue2 最新版為 2.7.16」)。
+- **新增第三參數 `opt`**：`WScanDep(fpIn, fdOut, opt)` 接受 `opt.systemName`、`opt.packageNotes`、`opt.debug`、`opt.funLog`，見上方〈報告用語〉。原「第三參數一律 reject」改為：`opt` 為 `undefined`、`null`、`{}` 皆可；不是一般物件、或給了已移除之 `opt.fdTools`(掃描工具位置改以環境變數 `W_BIN_CACHE` 指定)才 reject，訊息分別為 `invalid opt: must be a plain object`、`invalid opt.fdTools: removed, use env W_BIN_CACHE (see README 外部執行檔)`。
+- **呼叫端影響**：未傳選項者，`result.md` 之上述文字會變(變為中立說法)；要保留原本那份報告之措辭，請傳入 `systemName` 與 `packageNotes.vue`，範例見〈還原成升版前那份報告之措辭〉。`result.json`、`待更新套件.md`、輸出檔名與報告章節結構不變；深層匯入 `src/report.mjs` 之 `buildReport` 者，新增選用參數 `systemName`、`packageNotes`(用語同上)；`src/config.mjs` 之 `PACKAGE_NOTES.vue.body` 內容隨預設說明改變。
 
 ### 隔離安裝沿用呼叫端專案之倉庫設定
 
@@ -123,7 +196,7 @@ test()
 
 ### 外部執行檔改造
 
-- 移除 `opt.fdTools` 與 `fdOut/tools/`：`WScanDep(fpIn, fdOut)` 不再接受第三參數(傳入即 reject)；掃描工具改存於快取，要共用或改位置請設環境變數 `W_BIN_CACHE`(或預先呼叫 `wsd.ensureBins({ cacheDir })`)。原 `fdOut/tools/` 隨產出交付業主之作法取消。
+- 移除 `opt.fdTools` 與 `fdOut/tools/`：`WScanDep(fpIn, fdOut, opt)` 之 `opt.fdTools` 已移除(給了即 reject；2026-11-06 起第三參數改接受報告用語之選項，見上方〈報告預設文字改為中立…〉)；掃描工具改存於快取，要共用或改位置請設環境變數 `W_BIN_CACHE`(或預先呼叫 `wsd.ensureBins({ cacheDir })`)。原 `fdOut/tools/` 隨產出交付業主之作法取消。
 - 掃描工具不再於每次執行時查 GitHub API 取 `releases/latest`，改依 `bin/manifest.json`(版本標籤網址，校驗 SHA-256 與大小)；`result.json` 之 `tools` 仍為各工具之版本標籤，但取自清單。
 - 工具之取得移到 `npm install` 之前：工具取不到(離線無快取、校驗不符等)時立即中止，不待安裝掃描目標相依數分鐘後才失敗。
 - 移除 `src/download.mjs`(`ensureTool`、`ensureAllTools`、`installVerDir`)及其深層匯入點；改用 `wsd.ensureBins()`(或深層匯入 `w-scan-dep/src/ensureBins.mjs`)，回傳 `{ [檔名]: 絕對路徑 }`，失敗時 reject 帶 `code` 之 Error。

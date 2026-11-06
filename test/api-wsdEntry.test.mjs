@@ -246,17 +246,54 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         assert.strict.deepStrictEqual(calls, [])
     })
 
-    it(`should reject the removed third argument (opt.fdTools) before doing anything`, async function() {
+    //2026-11-06 sd330: 第三參數 opt 改為接受 { systemName, packageNotes, debug, funLog }(報告用語由呼叫端傳入); 原 opt.fdTools 仍為已移除之鍵, 傳入即 reject
+    it(`should reject opt.fdTools (removed) and an opt that is not a plain object before doing anything`, async function() {
         let out = path.join(fdt, 'out-d')
-        for (let opt of [{ fdTools: path.join(fdt, 'tools') }, {}, 'x']) {
+        let removed = 'invalid opt.fdTools: removed, use env W_BIN_CACHE (see README 外部執行檔)'
+        for (let [opt, msg] of [[{ fdTools: path.join(fdt, 'tools') }, removed], [{ systemName: '範例系統', fdTools: 'x' }, removed], ['x', 'invalid opt: must be a plain object'], [1, 'invalid opt: must be a plain object'], [[], 'invalid opt: must be a plain object'], [true, 'invalid opt: must be a plain object']]) {
             let err = await WScanDep(fpIn, out, opt).then(() => null, (e) => e)
             assert.strict.equal(err instanceof Error, true, JSON.stringify(opt))
-            assert.strict.equal(err.message.includes('不接受第三參數') && err.message.includes('W_BIN_CACHE'), true, err.message)
+            assert.strict.equal(err.message, msg)
         }
         assert.strict.deepStrictEqual(calls, [])
+        assert.strict.deepStrictEqual(cfgCalls, [])
         assert.strict.deepStrictEqual(netCalls, [])
         assert.strict.equal(fs.existsSync(out), false)
         assert.strict.equal(fs.existsSync(path.join(fdt, 'tools')), false)
+    })
+
+    //報告用語(sd330): 未給 opt、opt 為 null 或 {} 時 result.md 相同且用中立說法; 給了 systemName 與 packageNotes 時代入; result.json 之鍵與內容不受影響
+    it(`should write neutral wording into result.md by default and the systemName and packageNotes of opt when given, keeping result.json unchanged`, async function() {
+        let cacheRoot = path.join(fdt, 'cache-opt')
+        let env = { W_BIN_CACHE: cacheRoot, W_BIN_MIRROR: mirror, W_BIN_OFFLINE: '1' }
+        let run = async (name, opt) => {
+            let out = path.join(fdt, name)
+            let r = await withEnv(env, () => (opt === undefined ? WScanDep(fpIn, out) : WScanDep(fpIn, out, opt)))
+            assert.strict.equal(r, 'ok')
+            return { md: fs.readFileSync(path.join(out, 'result.md'), 'utf8'), j: JSON.parse(fs.readFileSync(path.join(out, 'result.json'), 'utf8')), up: fs.readFileSync(path.join(out, '待更新套件.md'), 'utf8') }
+        }
+        let a = await run('out-opt-a')
+        let b = await run('out-opt-b', {})
+        let c = await run('out-opt-c', null)
+        let d = await run('out-opt-d', { systemName: ' 範例系統 ', packageNotes: { semver: { heading: '【semver 自訂】', body: '自訂內容' } } })
+        //未給 opt: 中立說法, 不含特定系統字樣
+        assert.strict.ok(a.md.includes('所提及之工具進行依賴套件掃描：\n') && a.md.includes('\n1. 使用 syft 掃描已安裝之依賴\n'), a.md)
+        let mdNoPath = a.md.split('\n').filter((l) => !l.startsWith('- 掃描目標：')).join('\n') //掃描目標為本機路徑, 不屬報告用語
+        assert.strict.ok(!mdNoPath.includes('系統') && !mdNoPath.includes('自訂'), a.md)
+        //{}、null 與未給逐字相同
+        assert.strict.equal(b.md, a.md)
+        assert.strict.equal(c.md, a.md)
+        //給了: 代入兩處、附自訂說明(semver 被 osv-scanner 與 grype 標注); 其餘逐字相同
+        assert.strict.ok(d.md.includes('所提及之工具進行範例系統之依賴套件掃描：\n') && d.md.includes('\n1. 使用 syft 掃描範例系統安裝依賴\n'), d.md)
+        assert.strict.ok(d.md.includes('【semver 自訂】\n\n自訂內容\n'), d.md)
+        assert.strict.equal(d.md.replace('進行範例系統之依賴', '進行依賴').replace('掃描範例系統安裝依賴', '掃描已安裝之依賴').replace(/\n【semver 自訂】\n\n自訂內容\n$/, ''), a.md)
+        //result.json 之鍵與內容(除輸出路徑)、待更新套件.md 不受影響
+        for (let x of [b, c, d]) {
+            assert.strict.deepStrictEqual(Object.keys(x.j), ks)
+            assert.strict.deepStrictEqual({ ...x.j, outputDir: null }, { ...a.j, outputDir: null })
+            assert.strict.equal(x.up, a.up)
+        }
+        assert.strict.deepStrictEqual(netCalls, [])
     })
 
     //建議w-scan-dep修正.md(Gitea #24)一建議 2、二(主控裁定 2、4):ex-sbom 於截圖期間結束時,只作廢截圖;

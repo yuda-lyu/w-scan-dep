@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#parseWsdOpt">parseWsdOpt</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
     
 </nav>
 
@@ -64,7 +64,7 @@
 
     
 
-    <h4 class="name" id="WScanDep"><span class="type-signature type-signature-async">(async) </span>new WScanDep<span class="signature">(fpIn, fdOut)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+    <h4 class="name" id="WScanDep"><span class="type-signature type-signature-async">(async) </span>new WScanDep<span class="signature">(fpIn, fdOut, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
 
@@ -83,13 +83,14 @@ ex-sbom服務埠自18080起自動選用；同時掃描多個專案須以不同no
 <p>npm install之時限由環境變數W_NPM_INSTALL_TIMEOUT(秒，正數，至多2147483)指定，預設1200(20分鐘)，逾時即結束整個安裝子行程樹並reject含「逾時」之錯誤；值不為正數時於任何下載與寫入前reject。
 syft、grype、osv-scanner之單次執行時限各由環境變數W_SYFT_TIMEOUT(預設3600秒)、W_GRYPE_TIMEOUT(預設1800秒，首次執行含下載漏洞資料庫)、W_OSV_SCANNER_TIMEOUT(預設600秒，osv-scanner對markdown與json各跑一次、各自計時)指定(秒，正數，至多2147483)，逾時即結束該工具之整個子行程樹並reject含「逾時」與工具名之錯誤(此時不寫出result.*)；值不為正數時於任何下載與寫入前reject。預設值依實測(1364個元件：syft暖6秒、冷81秒、本機被他程序占滿時519秒；grype冷資料庫86秒；osv-scanner每次3.5秒內)訂定，取實測最大值之5倍以上。</p>
 <p>ex-sbom之任何失敗(啟動失敗、截圖期間意外結束、分析SBOM失敗等)只作廢截圖：仍resolve 'ok'並寫出syft、grype、osv-scanner之結果，result.json之exsbom.ok為false、exsbom.error為原因(截圖期間意外結束時附ex-sbom.log之fatal error/panic及其後數行)，並刪除fdOut/pics；呼叫端以exsbom.ok判斷是否採用截圖。
-ex-sbom v0.2.0對相依關係含循環之SBOM會無限遞迴而結束(npm常見，如es-abstract與string.prototype.trim互相依賴)：本套件上傳前於副本剔除構成循環之關係(syft原檔不動，grype與osv-scanner不受影響)，剔除者列於result.json之exsbom.removedRelationships([{ from, to, relationshipType, spdxElementId, relatedSpdxElement }]，無循環為[]，截圖失敗且尚未算出時為null)。</p></li></ul></dd>
+ex-sbom v0.2.0對相依關係含循環之SBOM會無限遞迴而結束(npm常見，如es-abstract與string.prototype.trim互相依賴)：本套件上傳前於副本剔除構成循環之關係(syft原檔不動，grype與osv-scanner不受影響)，剔除者列於result.json之exsbom.removedRelationships([{ from, to, relationshipType, spdxElementId, relatedSpdxElement }]，無循環為[]，截圖失敗且尚未算出時為null)。</p>
+<p>報告用語由呼叫端傳入(第三參數opt)：公開套件之預設文字不提任何特定系統之名稱與現況，專案自己的用語由呼叫端提供。opt.systemName為報告內文中的系統名，代入result.md〈一、依賴套件掃描技術〉之「進行…之依賴套件掃描」與「使用syft掃描…安裝依賴」兩處，未給或非預期時用中立說法(「進行依賴套件掃描」「使用syft掃描已安裝之依賴」)；opt.packageNotes為套件說明(套件名→{ heading, body })，被工具標注之套件有對應說明時附於result.md結尾，與預設說明(xlsx、vue)合併：套件名相同者覆寫該套件之預設說明，不同者新增於預設說明之後(依物件鍵序)；systemName、heading、body原樣輸出不跳脫(視為呼叫端自己撰寫之報告文字)；預設說明只含通用事實，不含特定系統之現況與規劃。給了而非預期之值(opt.systemName非單行非空白字串、opt.packageNotes非一般物件、說明項缺body等)視為未給、改用預設而不報錯，opt.debug為true時另以opt.funLog(未給用console.warn)輸出固定詞彙之警告(不含傳入之值，同一原因每行程一次)；opt不為一般物件、或給了已移除之opt.fdTools時於任何下載與寫入前reject。result.json、待更新套件.md與輸出檔名、報告章節結構皆不受影響。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="WScanDep.mjs.html">WScanDep.mjs</a>, <a href="WScanDep.mjs.html#line140">line 140</a>
+        <a href="WScanDep.mjs.html">WScanDep.mjs</a>, <a href="WScanDep.mjs.html#line156">line 156</a>
     </li></ul></dd>
     
 
@@ -147,6 +148,12 @@ async function test() {
     console.log(r)
     // => 'ok'
 
+    // 報告用語由呼叫端傳入(系統名、套件說明):
+    // let r2 = await wsd(fpIn, fdOut, {
+    //     systemName: '某系統',
+    //     packageNotes: { vue: { heading: '【vue 套件/框架說明】', body: '某系統目前使用vue2最新版(2.7.16)…' } },
+    // })
+
     // 產出於fdOut:
     //   result.json 檢測數據(含掃描範圍scope、各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
     //   result.md 掃描報告
@@ -182,7 +189,11 @@ test()
         <th>Type</th>
 
         
+        <th>Attributes</th>
+        
 
+        
+        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -208,7 +219,19 @@ test()
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串</p></td>
@@ -232,10 +255,252 @@ test()
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝正式相依樹〔不含devDependencies〕之掃描目標)、result.json(含範圍欄位scope)、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入選項物件，預設{}；undefined或null視為未給，其他非一般物件(陣列、字串等)reject；已移除之opt.fdTools給了即reject(掃描工具位置改以環境變數W_BIN_CACHE指定)</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>systemName</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>''</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入報告內文中的系統名字串(單行非空白字串，去前後空白後代入)，預設''(用中立說法，不提任何系統名)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>packageNotes</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入套件說明物件，鍵為套件名、值為{ heading, body }，預設{}。body為說明內文(markdown，非空白字串，必給，缺或非預期則該筆忽略)；heading為標題行(單行非空白字串，選給，未給或非預期時覆寫沿用該套件預設標題、新增則為「【套件名 套件說明】」)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>debug</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Boolean</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>false</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入是否輸出非預期選項之警告布林值，預設false</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>funLog</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">function</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入警告出口函數(msg, info)，預設null(用console.warn)，僅opt.debug為true時使用</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
         </tr>
 
     
@@ -320,7 +585,7 @@ test()
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 05 2026 14:45:32 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Nov 06 2026 10:56:05 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

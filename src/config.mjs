@@ -35,6 +35,8 @@ export const SCAN_SCOPE_NOTE = '僅 dependencies（正式相依樹，含其所�
 
 // 已知套件之人工說明(領域知識,非掃描器輸出)。
 // 報告產製時,若掃描結果命中對應套件名,則附上此說明段落。
+// 預設只放通用事實(漏洞名稱、CVSS、觸發條件、情境),不寫特定系統之現況與規劃(公開套件,2026-11-06);
+// 專案自己的用語由呼叫端以 opt.packageNotes 傳入(新增或覆寫),見 scanOpt.mjs 與 README〈報告用語〉。
 // vue 之 Vue2 已知漏洞表由使用者提供之截圖(image-3.png)轉為 markdown 表格。
 export const PACKAGE_NOTES = {
     xlsx: {
@@ -50,7 +52,7 @@ export const PACKAGE_NOTES = {
     vue: {
         heading: '【vue 套件/框架說明】',
         body: [
-            '目前高放全系統都使用 vue（2.7.16），此為 vue2 最新版。' +
+            'vue2 最新版為 2.7.16，' +
             '其被提報之漏洞主要是中低風險漏洞，詳情如下表 1：',
             '',
             '表 1 Vue2 已知漏洞',
@@ -59,8 +61,6 @@ export const PACKAGE_NOTES = {
             '| --- | --- | --- |',
             '| **ReDoS**<br>CVSS：3.7（Low） | 攻擊者需能注入惡意 Vue 模板 | **幾乎不受影響**：模板是開發者寫的，使用者無法控制 |',
             '| **XSS via prototype pollution**<br>CVSS：4.2（Medium） | 需先有 prototype pollution 入口 | **風險低**：除非其他依賴有 prototype pollution 漏洞可串聯 |',
-            '',
-            '若欲修復此 2 漏洞，仍須待之後進行大規模之底層重構，才有辦法讓高放主系統由 vue2 升 vue3 版。',
         ].join('\n'),
     },
 }

@@ -2,6 +2,7 @@
 // 產出之 md 內圖片路徑相對於報告檔(位於 ROOT),截圖置於 ROOT/shots。
 import { basename } from 'node:path'
 import { PACKAGE_NOTES, GUIDE_URL, TOOLS, SCAN_SCOPE_NOTE } from './config.mjs'
+import { resolveSystemName, mergePackageNotes } from './scanOpt.mjs'
 
 const REPO_OF = Object.fromEntries(TOOLS.map((t) => [t.key, t.repo]))
 
@@ -24,9 +25,12 @@ function flaggedPackages(scan) {
     return [...map.values()]
 }
 
-export function buildReport({ target, toolVersions, scan, exsbom, date, picsPrefix = 'shots/' }) {
+// systemName:報告內文中的系統名(單行非空白字串),未給或非預期則用中立說法(不提任何系統名);
+// packageNotes:呼叫端的套件說明(套件名 → { heading?, body }),與預設說明合併(新增或覆寫);兩者皆由呼叫端傳入,見 scanOpt.mjs
+export function buildReport({ target, toolVersions, scan, exsbom, date, picsPrefix = 'shots/', systemName, packageNotes }) {
     const L = []
     const pkgs = flaggedPackages(scan)
+    const sys = resolveSystemName(systemName)
     const rel = (abs) => picsPrefix + basename(abs)
 
     L.push('# 依賴套件掃描報告')
@@ -53,10 +57,10 @@ export function buildReport({ target, toolVersions, scan, exsbom, date, picsPref
 
     // 一、掃描技術
     L.push('## 一、依賴套件掃描技術')
-    L.push(`基於「SBOM 開源工具使用說明」所提及之工具進行高放主系統之依賴套件掃描：`)
+    L.push(`基於「SBOM 開源工具使用說明」所提及之工具進行${sys ? `${sys}之` : ''}依賴套件掃描：`)
     L.push(GUIDE_URL)
     L.push('')
-    L.push('1. 使用 syft 掃描高放主系統安裝依賴')
+    L.push(sys ? `1. 使用 syft 掃描${sys}安裝依賴` : '1. 使用 syft 掃描已安裝之依賴')
     L.push('2. 使用 grype 與 osv-scanner 依照各自資料庫去判斷所依賴之風險套件')
     L.push('')
     L.push('註：grype 未列於「Guide_to_SBOM_and_OSV_Tools」，但此為 syft 同家產品，資料庫 osv-scanner 相較更新比較完整。')
@@ -140,11 +144,10 @@ export function buildReport({ target, toolVersions, scan, exsbom, date, picsPref
     }
     L.push('')
 
-    // 已知套件說明(命中 PACKAGE_NOTES 者;三項工具任一標注即納入)
+    // 套件說明(命中預設說明或呼叫端說明者;三項工具任一標注即納入;順序:預設者在前〔被覆寫者位置不變〕,呼叫端新增者其後)
     const notedNames = allNames
-    for (const name of Object.keys(PACKAGE_NOTES)) {
+    for (const [name, note] of mergePackageNotes(PACKAGE_NOTES, packageNotes)) {
         if (notedNames.has(name)) {
-            const note = PACKAGE_NOTES[name]
             L.push(note.heading)
             L.push('')
             L.push(note.body)

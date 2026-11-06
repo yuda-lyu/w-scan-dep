@@ -50,10 +50,10 @@ describe('WScanDep', function() {
         }
     })
 
-    //第三參數(原 opt.fdTools)已移除:明確拒絕, 且於任何寫入前
-    it('第三參數(原 opt.fdTools)已移除:拒絕,且不建立 fdOut', async function() {
+    //第三參數 opt 之已移除鍵 opt.fdTools:明確拒絕, 且於任何寫入前(2026-11-06 起第三參數改接受 systemName、packageNotes,見 api-wsdEntry、unit-scanOpt)
+    it('opt.fdTools 已移除:拒絕,且不建立 fdOut', async function() {
         let out = './test/_tmp/WScanDep-guard/out'
-        await assert.rejects(wsd(fpIn, out, { fdTools: `${out}/test/tools` }), /不接受第三參數/)
+        await assert.rejects(wsd(fpIn, out, { fdTools: `${out}/test/tools` }), /invalid opt\.fdTools: removed, use env W_BIN_CACHE/)
         assert.strict.ok(!fs.existsSync(out))
     })
 

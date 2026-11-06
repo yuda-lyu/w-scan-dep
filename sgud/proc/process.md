@@ -10,7 +10,7 @@
 
 ## 1. 執行方式
 
-API 為 `WScanDep(fpIn, fdOut)`：`fpIn` 傳 package.json 檔路徑或其所在資料夾，`fdOut` 傳輸出資料夾。**不接受第三參數**（原 `opt.fdTools` 於 2026-10-29 移除，傳入即 reject）；掃描工具存於 `ensureBins` 快取（預設 `<套件根>/bin-cache/`，可由環境變數 `W_BIN_CACHE` 改位置、多個專案共用），見 README〈外部執行檔〉。快取位置若落在 `fdOut` 之 `test`、`pics`、`exsbom-work` 內會 throw（`src/layout.mjs` `assertToolsOutside`）。
+API 為 `WScanDep(fpIn, fdOut, opt)`：`fpIn` 傳 package.json 檔路徑或其所在資料夾，`fdOut` 傳輸出資料夾。`opt` 可省略，只含報告用語（`systemName`、`packageNotes`、`debug`、`funLog`，見 README〈報告用語〉與規則帳本 R-REPORT-TEXT-01；系統名與各套件之補充說明由呼叫端傳入，本套件預設文字不得寫特定系統之名稱與現況）；原 `opt.fdTools` 於 2026-10-29 移除，給了即 reject；`opt` 非一般物件亦 reject。掃描工具存於 `ensureBins` 快取（預設 `<套件根>/bin-cache/`，可由環境變數 `W_BIN_CACHE` 改位置、多個專案共用），見 README〈外部執行檔〉。快取位置若落在 `fdOut` 之 `test`、`pics`、`exsbom-work` 內會 throw（`src/layout.mjs` `assertToolsOutside`）。
 
 同時掃描多個專案：須以**不同 node 程序**且**不同 fdOut** 執行（2026-10-03 起支援）。同一程序內並行不支援（syft、grype、osv-scanner 等為同步呼叫，會阻塞另一掃描之計時與瀏覽器操作；npm install 於 2026-10-29 改為非同步，不改變此結論）；同一 fdOut 並行不支援（test、scan、pics 互相覆蓋）。
 

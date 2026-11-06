@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <title>scanOpt.mjs - Documentation</title>
+    
+    
+    <script src="scripts/prettify/prettify.js"></script>
+    <script src="scripts/prettify/lang-css.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc.css">
+    <script src="scripts/nav.js" defer></script>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+<input type="checkbox" id="nav-trigger" class="nav-trigger" />
+<label for="nav-trigger" class="navicon-button x">
+  <div class="navicon"></div>
+</label>
+
+<label for="nav-trigger" class="overlay"></label>
+
+<nav >
+    
+    
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#parseWsdOpt">parseWsdOpt</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
+    
+</nav>
+
+<div id="main">
+    
+    <h1 class="page-title">scanOpt.mjs</h1>
+    
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>// WScanDep 第三參數 opt 之檢測,以及報告用語(系統名、套件說明)之整理。
+// 規格:dspec〈輸入參數之檢測機制〉§4(opt 本身:undefined/null 視為未給,其他非一般物件無效;各鍵給了而非預期者視為未給、改用預設;
+// 已移除之鍵給了即無效;未宣告之鍵忽略;不改寫呼叫端之 opt;每鍵只讀一次,讀取拋錯即無效)與 K3 之 opt.debug(true 時警告,固定詞彙、不含傳入之值、每行程每原因一次)。
+// 報告用語由呼叫端傳入(公開套件之預設文字不得寫死特定系統之名稱與現況):
+//   opt.systemName   報告內文中的系統名(單行非空白字串);未給或非預期則用中立說法(不提任何系統名)
+//   opt.packageNotes 套件說明(物件:套件名 → { heading?, body }),新增或覆寫預設說明
+//   opt.debug        true 時,非預期之選項另輸出警告(固定詞彙,不含傳入之值)
+//   opt.funLog       警告出口(函數);未給則 console.warn
+// 本檔不由 WScanDep.mjs 以外匯出(WScanDep.mjs 僅 default 匯出)。
+
+const FN = 'WScanDep'
+const KNOWN_KEYS = ['systemName', 'packageNotes', 'debug', 'funLog']
+const REMOVED_FDTOOLS = 'invalid opt.fdTools: removed, use env W_BIN_CACHE (see README 外部執行檔)'
+
+const MSG = {
+    funLog: `[w-scan-dep ${FN}] invalid opt.funLog: must be a function, using console.warn`,
+    systemName: `[w-scan-dep ${FN}] invalid opt.systemName: must be a single-line non-blank string, using default (neutral wording)`,
+    packageNotes: `[w-scan-dep ${FN}] invalid opt.packageNotes: must be a plain object, using default notes only`,
+    entry: `[w-scan-dep ${FN}] invalid opt.packageNotes entry: must be a plain object with a non-blank string body (heading optional), entry ignored`,
+    heading: `[w-scan-dep ${FN}] invalid opt.packageNotes entry heading: must be a single-line non-blank string, using default heading`,
+    unknown: `[w-scan-dep ${FN}] unknown opt keys ignored (known: ${KNOWN_KEYS.join(', ')})`,
+}
+
+// 每行程每原因警告一次
+const warned = new Set()
+
+export function resetWarned() {
+    warned.clear()
+}
+
+// 一般物件:原型為 null,或原型之原型為 null(Object.prototype 在他 realm 亦然);陣列、Date、Map、class 實例、函數、已撤銷之 Proxy 皆非
+function isPlainObject(v) {
+    try {
+        if (v === null || typeof v !== 'object') return false
+        if (Object.prototype.toString.call(v) !== '[object Object]') return false
+        const p = Object.getPrototypeOf(v)
+        return p === null || Object.getPrototypeOf(p) === null
+    }
+    catch {
+        return false
+    }
+}
+
+// 讀取一次,拋錯(存取器、Proxy)視為未給
+function readOnce(o, k) {
+    try {
+        return o[k]
+    }
+    catch {
+        return undefined
+    }
+}
+
+// 單行非空白字串(原始字串;包裝物件、含換行或控制字元者無效:\r \n、其餘 C0 控制字元〔tab 除外〕、DEL、U+0085、U+2028、U+2029)
+function isLine(v) {
+    if (typeof v !== 'string' || v.trim() === '') return false
+    for (const ch of v) {
+        const c = ch.codePointAt(0)
+        if (c &lt;= 0x08 || (c >= 0x0a &amp;&amp; c &lt;= 0x1f) || c === 0x7f || c === 0x85 || c === 0x2028 || c === 0x2029) return false
+    }
+    return true
+}
+
+// 系統名:有效則去前後空白後回傳,否則回空字串(=中立說法)
+export function resolveSystemName(v) {
+    return isLine(v) ? v.trim() : ''
+}
+
+// 整理一筆套件說明:body 為非空白字串才有效;heading 非預期則不帶(由呼叫端用預設 heading)。回 { entry, badHeading } 或 null
+function normEntry(raw) {
+    if (!isPlainObject(raw)) return null
+    const body = readOnce(raw, 'body')
+    if (typeof body !== 'string' || body.trim() === '') return null
+    const heading = readOnce(raw, 'heading')
+    const hasHeading = heading !== undefined &amp;&amp; heading !== null
+    const okHeading = isLine(heading)
+    const entry = okHeading ? { heading, body } : { body }
+    return { entry, badHeading: hasHeading &amp;&amp; !okHeading }
+}
+
+// 整理呼叫端之套件說明:回 { notes: 新物件(原型 null,鍵為套件名,值為 { heading?, body }), badEntry, badHeading, bad }
+function normNotes(custom) {
+    const out = Object.create(null)
+    const r = { notes: out, badEntry: false, badHeading: false, bad: false }
+    if (custom === undefined || custom === null) return r
+    if (!isPlainObject(custom)) {
+        r.bad = true
+        return r
+    }
+    let keys
+    try {
+        keys = Object.keys(custom)
+    }
+    catch {
+        r.bad = true
+        return r
+    }
+    for (const k of keys) {
+        const ne = normEntry(readOnce(custom, k))
+        if (!ne) {
+            r.badEntry = true
+            continue
+        }
+        if (ne.badHeading) r.badHeading = true
+        Object.defineProperty(out, k, { value: ne.entry, enumerable: true, writable: true, configurable: true }) // 以 defineProperty 建立,'__proto__' 亦為一般鍵
+    }
+    return r
+}
+
+// 預設說明與呼叫端說明合併:回 Map(套件名 → { heading, body })。
+// 預設之順序在前(被覆寫者位置不變),新增者依給定順序接於其後;呼叫端說明未給 heading 者,沿用預設 heading,無預設則「【套件名 套件說明】」。不改動 defaults 與 custom。
+export function mergePackageNotes(defaults, custom) {
+    const m = new Map()
+    for (const [k, v] of Object.entries(defaults)) m.set(k, { heading: v.heading, body: v.body })
+    const { notes } = normNotes(custom)
+    for (const k of Object.keys(notes)) {
+        const e = notes[k]
+        const heading = e.heading !== undefined ? e.heading : (m.has(k) ? m.get(k).heading : `【${k} 套件說明】`)
+        m.set(k, { heading, body: e.body })
+    }
+    return m
+}
+
+function warnOnce(reason, msg, key, funLog) {
+    if (warned.has(reason)) return
+    warned.add(reason)
+    try {
+        if (typeof funLog === 'function') {
+            const r = funLog(msg, { fn: FN, reason: reason === 'unknown' ? 'unknown' : 'invalid', key })
+            // 回傳 thenable(如 async 函數)時,其 rejection 一律忽略,否則成為 unhandledRejection 而使行程崩潰
+            if (r !== null &amp;&amp; r !== undefined &amp;&amp; typeof r.then === 'function') r.then(undefined, () => {})
+        }
+        else {
+            console.warn(msg)
+        }
+    }
+    catch {
+        // 出口拋錯一律忽略
+    }
+}
+
+/**
+ * 檢測 WScanDep 之 opt,回傳整理後之報告用語。無效時拋 Error(WScanDep 為 async,故為 reject),先於任何寫入。
+ * @param {*} opt 呼叫端之 opt(不被改寫)
+ * @returns {{ systemName: String, packageNotes: Object }} systemName 為空字串表示未給(中立說法);packageNotes 為只含有效 entry 之新物件
+ */
+export function parseWsdOpt(opt) {
+    if (opt === undefined || opt === null) {
+        return { systemName: '', packageNotes: Object.create(null) }
+    }
+    if (!isPlainObject(opt)) {
+        throw new Error('invalid opt: must be a plain object')
+    }
+
+    // 已移除之鍵:給了(非 undefined、null)即無效;讀取拋錯(存取器、Proxy)視為無效(V11),不放行
+    let fdTools
+    try {
+        fdTools = opt.fdTools
+    }
+    catch {
+        throw new Error(REMOVED_FDTOOLS)
+    }
+    if (fdTools !== undefined &amp;&amp; fdTools !== null) {
+        throw new Error(REMOVED_FDTOOLS)
+    }
+
+    // 每個鍵只讀一次
+    const debug = readOnce(opt, 'debug') === true
+    const funLogRaw = debug ? readOnce(opt, 'funLog') : undefined
+    const funLog = typeof funLogRaw === 'function' ? funLogRaw : null
+    const badFunLog = funLogRaw !== undefined &amp;&amp; funLogRaw !== null &amp;&amp; funLog === null
+    const rawName = readOnce(opt, 'systemName')
+    const rawNotes = readOnce(opt, 'packageNotes')
+    const warn = (reason, key) => {
+        if (debug) warnOnce(reason, MSG[reason], key, funLog)
+    }
+
+    if (badFunLog) warn('funLog', 'opt.funLog') // funLog 非函數:警告改走 console.warn
+    const systemName = resolveSystemName(rawName)
+    if (systemName === '' &amp;&amp; rawName !== undefined &amp;&amp; rawName !== null) warn('systemName', 'opt.systemName')
+
+    const nn = normNotes(rawNotes)
+    if (nn.bad) warn('packageNotes', 'opt.packageNotes')
+    if (nn.badEntry) warn('entry', 'opt.packageNotes')
+    if (nn.badHeading) warn('heading', 'opt.packageNotes')
+
+    // 未宣告之鍵:忽略,debug 時提示一次(本函數不轉傳 opt;提示不含鍵名)
+    if (debug) {
+        let keys = []
+        try {
+            keys = Object.keys(opt)
+        }
+        catch {
+            keys = []
+        }
+        if (keys.some((k) => k !== 'fdTools' &amp;&amp; !KNOWN_KEYS.includes(k))) warn('unknown', 'opt')
+    }
+
+    return { systemName, packageNotes: nn.notes }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+    
+    
+</div>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Nov 06 2026 10:56:05 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+</footer>
+
+<script>prettyPrint();</script>
+<script src="scripts/polyfill.js"></script>
+<script src="scripts/linenumber.js"></script>
+
+
+
+</body>
+</html>

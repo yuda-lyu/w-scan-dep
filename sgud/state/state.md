@@ -8,7 +8,8 @@
 
 | 功能 | 狀態 | 規則帳本 | 測試 |
 | --- | --- | --- | --- |
-| 依賴掃描主流程 `WScanDep(fpIn, fdOut)`:npm install → syft/grype/osv-scanner → ex-sbom 截圖 → `result.json`/`result.md`/`待更新套件.md` | 完成;**不接受第三參數**(`opt.fdTools` 已於 2026-10-29 移除) | §2 前置條件、R-BIN-ENSURE-01 規則 5、7 | `test/WScanDep.test.mjs`(完整掃描,需連網、首次啟動新快取路徑之 ex-sbom 會觸發防火牆詢問)、`test/api-wsdEntry.test.mjs` |
+| 依賴掃描主流程 `WScanDep(fpIn, fdOut, opt)`:npm install → syft/grype/osv-scanner → ex-sbom 截圖 → `result.json`/`result.md`/`待更新套件.md` | 完成;第三參數 `opt` 只含報告用語(`systemName`、`packageNotes`、`debug`、`funLog`,見下列〈報告用語〉列);`opt.fdTools` 已於 2026-10-29 移除(給了即 reject);`opt` 非一般物件亦 reject | §2 前置條件、R-BIN-ENSURE-01 規則 5、7、R-REPORT-TEXT-01 | `test/WScanDep.test.mjs`(完整掃描,需連網、首次啟動新快取路徑之 ex-sbom 會觸發防火牆詢問)、`test/api-wsdEntry.test.mjs` |
+| 報告用語由呼叫端傳入(`src/scanOpt.mjs`;`report.mjs` 之 `buildReport` 新增選用參數 `systemName`、`packageNotes`;README〈報告用語〉與〈Breaking changes〉、`WScanDep` 之 JSDoc) | 完成(2026-11-06,排程第 330 項,使用者裁定公開 repo 不得含使用端之專案名、計畫名與業主字樣):預設文字與預設 vue 說明中立(「進行依賴套件掃描」「使用 syft 掃描已安裝之依賴」;vue 說明只留通用事實);`systemName` 代入兩處;`packageNotes` 新增或覆寫套件說明;給與原本等價之選項時報告逐字等於修前產出;`result.json`、`待更新套件.md`、檔名、章節結構不變 | R-REPORT-TEXT-01 | `test/unit-reportOpt.test.mjs`、`test/unit-scanOpt.test.mjs`、`test/unit-readmeRestore.test.mjs`、`test/api-wsdEntry.test.mjs`(2 案)、`test/WScanDep.test.mjs`(1 案)、golden `test/fixtures/report-restored-{ok,ng}.golden.md`、夾具 `test/tools/reportFixture.mjs` |
 | 掃描工具取得 `src/ensureBins.mjs`(`WScanDep.ensureBins` 靜態屬性) | 完成:wsemi `fsEnsureBins` 主幹模式;快取 `<套件根>/bin-cache/`,`W_BIN_CACHE`/`W_BIN_MIRROR`/`W_BIN_OFFLINE` | R-BIN-ENSURE-01 | `test/api-ensureBins.test.mjs`(T3~T8)、`test/api-wsdEntry.test.mjs` |
 | 清單 `bin/manifest.json`(floating,4 項) | 完成:syft v1.55.0、grype v0.121.0、osv-scanner v2.7.0、ex-sbom v0.2.0(2026-10-29 由 `toolg/genBinManifest.mjs` 產生,廠商 checksums 與 GitHub API digest 核對) | R-BIN-ENSURE-01 規則 2 | `test/unit-binManifest.test.mjs`(T1、T2、schema) |
 | 更新工具 `toolg/genBinManifest.mjs` | 完成:查最新版、下載資產與 checksums、核對、寫清單;`--dry-run`、`--only`、`--tag` | R-BIN-ENSURE-01 | `test/unit-genBinManifest.test.mjs` |
@@ -27,6 +28,10 @@
 
 ## 已知缺口與待辦
 
+- **`dist/`、`docs/dist/` 仍為舊產物**(2026-11-06 sd330):含舊預設文字(使用端之系統名與 vue 現況規劃),由發布流程(`script.txt`)重產後才中立;本輪未重產(`cleanFolder` 會先刪 `dist`、`docs`,失敗無法以 git 還原)。以新 `src/` 另編至暫存目錄之 UMD 已驗證不含舊字樣。git 歷史與已發布之 npm 版本仍含舊文字,無法由本套件消除。
+- **使用端升版後須傳入報告用語**:要保留原本那份報告之措辭,傳 `systemName` 與 `packageNotes.vue`(README〈還原成升版前那份報告之措辭〉);未傳者 `result.md` 之上述文字變為中立。
+- 「業主」一詞(`src/report.mjs:46`「供業主查核」)為通用角色詞,未改;是否視為使用端字樣由主控裁定(R-REPORT-TEXT-01 已知限制)。
+
 - **`bin/manifest.json` 尚未推上 GitHub 主幹**(本輪不得 commit/push):推上前執行期取主幹清單得 404,退回 npm 包內基準清單(功能正常);推上並發布後主幹模式才完整生效.
 - 未發布:`dist/`、`docs/` 為發布時自動產製,本輪未重編(UMD 已以暫存輸出驗證 external/globals 與 default 匯出形態).
 - 完整掃描(`test/WScanDep.test.mjs`「test」案)需連網與 npm registry,且首次以快取新路徑啟動 ex-sbom(Windows 防火牆詢問),本輪 agent 未跑,由主控/使用者跑.
@@ -43,6 +48,8 @@
 - 「清除前次殘留之工作子夾」案之時序假設已修(2026-10-30 run02):占用者改由 `test/tools/holdDir.mjs` 等確被持有才往下;清除邏輯另有不經 ex-sbom 之確定性單元測試(`cleanStaleWork` 已匯出).
 
 ## 最近一次驗證
+
+2026-11-06(任務 20261106102000 sd330,報告用語由呼叫端傳入):**全套 `npm test`(`--lock`)兩次皆 0 失敗**——第 1 次 359 通過(約 3 分 14 秒,審查前),第 2 次(最終碼)370 通過(約 1 分 49 秒;原 235 + 新增 135 案:`unit-reportOpt`、`unit-scanOpt`、`unit-readmeRestore`、`api-wsdEntry` 2 案,另改 `WScanDep.test.mjs` 1 案);修前紅(未改 `src` 之碼跑新測試)`unit-reportOpt`＋`api-wsdEntry` 受影響案 23 紅/33 綠(綠者為「非預期值視為未給」之守護案)、`unit-scanOpt` 因模組不存在整檔無法載入;變異 34 個(M1~M33、M12b)皆被抓到(M18 初版存活,補「不成為 unhandledRejection」案後被抓);eslint 變更行 0 error(`config.mjs`、`report.mjs` 既有舊問題 7 項未動);以新 `src` 另編 UMD 至暫存目錄驗證可打包、不含舊字樣;唯讀獨立審查(sonnet)17 項,6 項屬實已修、4 項屬實以文件註明、1 項屬實未修需裁示(`dist/`)、其餘 6 項不構成或依派工保留。報告:`C:\opensrcOper\dnow\20261106102000\agent-out\sd330-修正報告.md`.
 
 2026-11-02(任務 20261102182000 pk-scan-dep,npm 包檢查改依 `dspec/自有套件之npm發布範圍.md` 原則 2〈套件測試之 npm 包檢查〉):`test/unit-binManifest.test.mjs` 之 T1 案不再斷言 `sgud/` 不入包,改斷言 `sgud/state/state.md`、`test/tools/` 隨包並擴充「不得入包」至 `.node`／`.gz`／`.tgz`／`CLAUDE*.md`／`tmp/`／`.env`;`.npmignore` 首段改為完整抄錄 `.gitignore`、其後排除項加註原則 2 第 1 條(打包清單 113 檔不變,其中 `sgud/` 4 檔,執行期 `src/`+`dist/`+`bin/` 15 檔 442,040 位元組);修前 `unit-binManifest` 6 通過/1 失敗(`sgud/` 不應入包),修後 7/0;變異 6 個(假 `.dll`、`sgud` 不入包、`test/tools` 不入包、`CLAUDE*.md`／`tmp`／`.env` 排除規則移除)皆被抓到;全套 `npm test`(`--lock`)235 通過/0 失敗(約 3 分 13 秒).報告:`C:\opensrcOper\dnow\20261102182000\agent-out\pk-scan-dep-修正報告.md`.
 

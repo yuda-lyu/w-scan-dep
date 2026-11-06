@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="WScanDep.html">WScanDep</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#parseWsdOpt">parseWsdOpt</a></li><li><a href="global.html#pickRegistrySettings">pickRegistrySettings</a></li><li><a href="global.html#readCallerRegistry">readCallerRegistry</a></li><li><a href="global.html#runTool">runTool</a></li><li><a href="global.html#writeRegistryNpmrc">writeRegistryNpmrc</a></li></ul>
     
 </nav>
 
@@ -68,6 +68,8 @@
 // (2026-10-30 修正,主控裁定: 隔離安裝沿用呼叫端專案之倉庫設定——npm 之專案層 .npmrc 取自安裝目錄而讀不到呼叫端專案層者,
 //  故於呼叫端專案目錄取 npm 之生效 registry 與 @scope:registry,寫入 fdOut/test/.npmrc;只帶位址,不帶 include 等安裝集合設定與認證值;
 //  取得失敗即拋錯,見 npmRegistry.mjs)
+// (2026-11-06 修正,使用者裁定: 公開 repo 不得含使用端之專案名、計畫名與業主字樣——報告預設文字改為中立,系統名與套件說明由呼叫端經
+//  第三參數 opt.systemName、opt.packageNotes 傳入;第三參數由「一律拒收」改為接受 opt,僅已移除之 opt.fdTools 與非一般物件之 opt 仍 reject,見 scanOpt.mjs 與 README〈報告用語〉)
 // 流程:
 //   0) 經 ensureBins 取得 syft/grype/osv-scanner/ex-sbom(清單為 bin/manifest.json,校驗 SHA-256 與大小;取不到時即中止,不待 npm install 後才發現)
 //   1) 清除 fdOut/test 上次安裝殘留,複製 package.json,寫入沿用呼叫端專案倉庫位址之 .npmrc,並 npm install --omit=dev(只裝正式相依樹;產出 package-lock.json 與 node_modules;逾時即中止;裝後驗證無 dev 套件,有即中止)
@@ -89,6 +91,7 @@ import { captureExSbom } from './exsbom.mjs'
 import { buildReport } from './report.mjs'
 import { computeUpdateList, buildUpdateListMd } from './updatelist.mjs'
 import { SCAN_SCOPE } from './config.mjs'
+import { parseWsdOpt } from './scanOpt.mjs'
 
 const exists = async (p) => {
     try {
@@ -147,9 +150,16 @@ function serializeUpdateList(ul) {
  * ex-sbom之任何失敗(啟動失敗、截圖期間意外結束、分析SBOM失敗等)只作廢截圖：仍resolve 'ok'並寫出syft、grype、osv-scanner之結果，result.json之exsbom.ok為false、exsbom.error為原因(截圖期間意外結束時附ex-sbom.log之fatal error/panic及其後數行)，並刪除fdOut/pics；呼叫端以exsbom.ok判斷是否採用截圖。
  * ex-sbom v0.2.0對相依關係含循環之SBOM會無限遞迴而結束(npm常見，如es-abstract與string.prototype.trim互相依賴)：本套件上傳前於副本剔除構成循環之關係(syft原檔不動，grype與osv-scanner不受影響)，剔除者列於result.json之exsbom.removedRelationships([{ from, to, relationshipType, spdxElementId, relatedSpdxElement }]，無循環為[]，截圖失敗且尚未算出時為null)。
  *
+ * 報告用語由呼叫端傳入(第三參數opt)：公開套件之預設文字不提任何特定系統之名稱與現況，專案自己的用語由呼叫端提供。opt.systemName為報告內文中的系統名，代入result.md〈一、依賴套件掃描技術〉之「進行…之依賴套件掃描」與「使用syft掃描…安裝依賴」兩處，未給或非預期時用中立說法(「進行依賴套件掃描」「使用syft掃描已安裝之依賴」)；opt.packageNotes為套件說明(套件名→{ heading, body })，被工具標注之套件有對應說明時附於result.md結尾，與預設說明(xlsx、vue)合併：套件名相同者覆寫該套件之預設說明，不同者新增於預設說明之後(依物件鍵序)；systemName、heading、body原樣輸出不跳脫(視為呼叫端自己撰寫之報告文字)；預設說明只含通用事實，不含特定系統之現況與規劃。給了而非預期之值(opt.systemName非單行非空白字串、opt.packageNotes非一般物件、說明項缺body等)視為未給、改用預設而不報錯，opt.debug為true時另以opt.funLog(未給用console.warn)輸出固定詞彙之警告(不含傳入之值，同一原因每行程一次)；opt不為一般物件、或給了已移除之opt.fdTools時於任何下載與寫入前reject。result.json、待更新套件.md與輸出檔名、報告章節結構皆不受影響。
+ *
  * @class
  * @param {String} fpIn 輸入待掃描之package.json檔案路徑字串，亦可傳入含package.json之資料夾路徑字串
  * @param {String} fdOut 輸入輸出資料夾路徑字串，將產出test/(複製package.json全新安裝正式相依樹〔不含devDependencies〕之掃描目標)、result.json(含範圍欄位scope)、result.md、待更新套件.md與pics/*.png；掃描工具存於快取，不產出於此
+ * @param {Object} [opt={}] 輸入選項物件，預設{}；undefined或null視為未給，其他非一般物件(陣列、字串等)reject；已移除之opt.fdTools給了即reject(掃描工具位置改以環境變數W_BIN_CACHE指定)
+ * @param {String} [opt.systemName=''] 輸入報告內文中的系統名字串(單行非空白字串，去前後空白後代入)，預設''(用中立說法，不提任何系統名)
+ * @param {Object} [opt.packageNotes={}] 輸入套件說明物件，鍵為套件名、值為{ heading, body }，預設{}。body為說明內文(markdown，非空白字串，必給，缺或非預期則該筆忽略)；heading為標題行(單行非空白字串，選給，未給或非預期時覆寫沿用該套件預設標題、新增則為「【套件名 套件說明】」)
+ * @param {Boolean} [opt.debug=false] 輸入是否輸出非預期選項之警告布林值，預設false
+ * @param {Function} [opt.funLog=null] 輸入警告出口函數(msg, info)，預設null(用console.warn)，僅opt.debug為true時使用
  * @returns {Promise} 回傳Promise，resolve回傳'ok'(截圖失敗時亦同，以result.json之exsbom.ok辨識)，reject回傳錯誤訊息
  * @example
  *
@@ -163,6 +173,12 @@ function serializeUpdateList(ul) {
  *     let r = await wsd(fpIn, fdOut)
  *     console.log(r)
  *     // => 'ok'
+ *
+ *     // 報告用語由呼叫端傳入(系統名、套件說明):
+ *     // let r2 = await wsd(fpIn, fdOut, {
+ *     //     systemName: '某系統',
+ *     //     packageNotes: { vue: { heading: '【vue 套件/框架說明】', body: '某系統目前使用vue2最新版(2.7.16)…' } },
+ *     // })
  *
  *     // 產出於fdOut:
  *     //   result.json 檢測數據(含掃描範圍scope、各工具版本、osv/grype掃描結果、ex-sbom截圖相對路徑與成敗、連鎖更新清單)
@@ -185,10 +201,9 @@ function serializeUpdateList(ul) {
  *
  */
 async function WScanDep(fpIn, fdOut, opt) {
-    // 第三參數(原 opt.fdTools)已移除:明確拒絕,避免舊呼叫端以為工具仍放在其指定之資料夾
-    if (opt !== undefined &amp;&amp; opt !== null) {
-        throw new Error('WScanDep 已不接受第三參數 opt(原 opt.fdTools 已移除);掃描工具存於快取,改以環境變數 W_BIN_CACHE 指定,見 README〈外部執行檔〉')
-    }
+    // 第三參數 opt(2026-11-06 起接受 systemName、packageNotes、debug、funLog;見 scanOpt.mjs):檢測先於任何下載與寫入。
+    // 原 opt.fdTools 已移除,給了即拋錯並指向 W_BIN_CACHE,避免舊呼叫端以為工具仍放在其指定之資料夾
+    const { systemName, packageNotes } = parseWsdOpt(opt)
 
     // npm install 與 syft/grype/osv-scanner 之時限先行驗證:格式錯誤於任何下載與寫入前即拋錯
     const installTimeoutMs = npmInstallTimeoutMs()
@@ -294,7 +309,7 @@ async function WScanDep(fpIn, fdOut, opt) {
     await writeFile(join(outDir, 'result.json'), JSON.stringify(result, null, 2), 'utf8')
 
     // 5) md 報告 result.md(圖以相對路徑 ./pics)
-    const md = buildReport({ target: pkgJson, toolVersions: tools, scan, exsbom, date, picsPrefix: './pics/' })
+    const md = buildReport({ target: pkgJson, toolVersions: tools, scan, exsbom, date, picsPrefix: './pics/', systemName, packageNotes })
     await writeFile(join(outDir, 'result.md'), md, 'utf8')
 
     // 6) 連鎖更新清單
@@ -330,7 +345,7 @@ export default WScanDep
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 05 2026 14:45:32 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Fri Nov 06 2026 10:56:05 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
