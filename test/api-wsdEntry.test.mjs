@@ -6,6 +6,7 @@ import { PassThrough } from 'stream'
 import cp from 'node:child_process'
 import { syncBuiltinESMExports } from 'node:module'
 import { pathToFileURL } from 'url'
+import wpw from 'w-playwright'
 import { makeRelease, putMirror, makeFakePkg, withEnv } from './tools/fakeBins.mjs'
 import { hangRegistry } from './tools/hangRegistry.mjs'
 import { fakeNpmRegistry } from './tools/fakeNpmRegistry.mjs'
@@ -136,7 +137,7 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
                 calls.push({ kind: 'npm', cmd: c, cwd: opt && opt.cwd, env: opt && opt.env, callerInclude: process.env.npm_config_include })
                 return npmMode === 'real' ? spawnBak(cmd, ...rest) : fakeChildOk()
             }
-            //playwright 之瀏覽器(ms-playwright 下之 chrome/headless_shell)經同一 child_process 啟動:照常、不記錄
+            //經 w-playwright 啟動之瀏覽器(playwright-core 於 ms-playwright 下之 chrome/headless_shell)經同一 child_process 啟動:照常、不記錄
             if (/ms-playwright/i.test(c)) return spawnBak(cmd, ...rest)
             let opt = rest[1]
             //掃描工具一律以spawn啟動(須有時限與樹狀結束, 見R-SCAN-TIMEOUT-01; 以spawnSync啟動者記為'spawnSync', 使下列呼叫序列之斷言失敗)
@@ -332,6 +333,47 @@ describe(`WScanDep entry (ensureBins, fetch and spawn interception)`, function()
         assert.strict.ok(md.includes('ex-sbom 截圖失敗，本次無截圖') && !md.includes('](./pics/'), md)
         assert.strict.ok(md.includes('離開碼 2') && md.includes('fatal error: stack overflow'), md) //報告亦見結束原因
         assert.strict.ok(fs.readFileSync(path.join(out, '待更新套件.md'), 'utf8').includes('ex-sbom 截圖失敗，本清單只依 osv-scanner 與 grype'))
+        assert.strict.deepStrictEqual(netCalls, [])
+    })
+
+    //R-PW-WIRING(w-playwright 設計 §8.4、F21): ex-sbom 截圖之瀏覽器只經 w-playwright 啟動(src/exsbom.mjs 為唯一啟動點);
+    //替身收到合併後之選項, 即命令列恰一個 --disable-features 且為 args 之末、含守門功能 AutofillAiWalletPrivatePasses(Chromium 系每啟動一次即消耗一次錯誤密碼計數之防範)。
+    //替身只收選項並拋錯, 不啟動任何瀏覽器; 被測之 src 為 fdPkg 之複本, 與本檔取同一份 node_modules/w-playwright, 故替身對其生效
+    it(`should launch the browser for the screenshots only through w-playwright, with the merged options carrying the logon guard (R-PW-WIRING)`, async function() {
+        exMode = 'crash' //假 ex-sbom 就緒後, 流程進入瀏覽器啟動點
+        let seen = []
+        let restore = wpw.setBrowserTypeForTest({
+            launch: async (o) => {
+                seen.push(o)
+                throw new Error('wiring-sentinel')
+            },
+        })
+        let out = path.join(fdt, 'out-wire')
+        let r
+        try {
+            r = await withEnv({ W_BIN_CACHE: path.join(fdt, 'cache-wire'), W_BIN_MIRROR: mirror, W_BIN_OFFLINE: '1' }, () => WScanDep(fpIn, out))
+        }
+        finally {
+            restore()
+        }
+        assert.strict.equal(r, 'ok') //啟動失敗只作廢截圖
+        //替身確被呼叫(依賴樹有兩份 w-playwright 時替身可能空過, 故斷言次數)且恰一次: 單一啟動點、不重試
+        assert.strict.equal(seen.length, 1)
+        let o = seen[0]
+        assert.strict.equal(o.headless, true) //無頭(headless shell, 不屬會消耗錯誤密碼計數之種類)
+        assert.strict.equal(o.channel, undefined) //不指定系統瀏覽器通道
+        let df = o.args.filter((a) => a.startsWith('--disable-features='))
+        assert.strict.equal(df.length, 1, JSON.stringify(o.args)) //恰一串
+        assert.strict.equal(o.args[o.args.length - 1], df[0]) //置於 args 之末(Chromium 對重複開關取最後一個)
+        assert.strict.ok(df[0].split('=')[1].split(',').includes('AutofillAiWalletPrivatePasses'), df[0])
+        assert.strict.equal(o.args.filter((a) => a.startsWith('--enable-features=')).length <= 1, true)
+        assert.strict.ok(Array.isArray(o.ignoreDefaultArgs) && o.ignoreDefaultArgs.length >= 1) //去掉 Playwright 預設之那一串
+        //結果照常寫出, 截圖標為失敗, 原因不是被攔截之 ex-sbom 啟動(已走到瀏覽器啟動點)
+        let j = JSON.parse(fs.readFileSync(path.join(out, 'result.json'), 'utf8'))
+        assert.strict.equal(j.exsbom.ok, false)
+        assert.strict.ok(typeof j.exsbom.error === 'string' && j.exsbom.error.length > 0 && !j.exsbom.error.startsWith('intercepted spawn: '), j.exsbom.error)
+        assert.strict.equal(fs.existsSync(path.join(out, 'pics')), false)
+        assert.strict.equal(fs.existsSync(path.join(out, 'exsbom-work')), false)
         assert.strict.deepStrictEqual(netCalls, [])
     })
 

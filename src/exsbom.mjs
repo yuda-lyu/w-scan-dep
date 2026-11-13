@@ -1,4 +1,4 @@
-// ex-sbom 驅動:啟動網頁服務 → playwright 上傳 SBOM → 展開拓撲 →
+// ex-sbom 驅動:啟動網頁服務 → 經 w-playwright 啟動之瀏覽器上傳 SBOM → 展開拓撲 →
 // 對每個「自身被標注漏洞」之套件(紅色卡片)開啟詳情彈窗並截圖。
 // 截圖對應報告範本之 image-1(vue)/image-2(xlsx)彈窗樣式。
 // (2026-10-03 修正,見 建議w-scan-dep修正.md 與三審複審:
@@ -16,7 +16,7 @@
 import { mkdir, rm, mkdtemp, readdir, rmdir, readFile, writeFile, open } from 'node:fs/promises'
 import { spawn, spawnSync } from 'node:child_process'
 import { join, basename } from 'node:path'
-import { chromium } from 'playwright'
+import wpw from 'w-playwright'
 import execProcessPortPidsSync from 'wsemi/src/execProcessPortPidsSync.mjs'
 import { SHOTS_DIR, EXSBOM_PORT_FIRST, EXSBOM_PORT_LAST } from './config.mjs'
 
@@ -462,9 +462,11 @@ export async function captureExSbom(exsbomExe, spdxPath, shotsDir = SHOTS_DIR, l
 
         const flow = (async () => {
             const baseUrl = ex.baseUrl
-            // 全新、無頭、隔離之瀏覽器:playwright 自帶 Chromium + 臨時空白 profile,
+            // 全新、無頭、隔離之瀏覽器:經 w-playwright 啟動 Playwright 受管之 headless shell + 臨時空白 profile,
             // 與使用者本機之 Edge/Chrome、登入身份、cookie 完全無關,互不影響。
-            browser = await chromium.launch({ headless: true })
+            // 一律經 w-playwright(不直接用 playwright):其於每次啟動之命令列恰給一個 --disable-features(含守門功能),
+            // 防止 Chromium 系瀏覽器每啟動一次即替目前 Windows 使用者以錯誤密碼呼叫一次 LogonUser 而累計鎖定帳號(使用端回報)。
+            browser = await wpw.launchChromium({ headless: true })
             if (aborted) {
                 await browser.close().catch(() => {}) // 啟動瀏覽器期間已中止:finally 先跑完了,自行關閉
                 throw new Error('aborted')

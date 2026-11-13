@@ -16,6 +16,7 @@
 | R-NPM-REGISTRY-01 | 隔離安裝沿用呼叫端專案之倉庫位址設定:於 `fpIn` 所在資料夾取 `npm config list --json` 之生效 `registry` 與 `@scope:registry`,寫入 `fdOut/test/.npmrc`;只帶位址、不帶 include 等安裝集合設定與認證值;取得失敗拋錯(主控提出,Gitea #27 run02 之範圍外發現,2026-10-30 任務 20261030174519 run01) | 本檔 |
 | R-REPORT-TEXT-01 | 報告用語由呼叫端傳入:預設文字與預設套件說明中立(不含使用端之系統名、專案名、計畫名與其現況規劃);`opt.systemName`、`opt.packageNotes`(新增或覆寫套件說明)、`opt.debug`、`opt.funLog`;輸入檢測依 dspec〈輸入參數之檢測機制〉(排程第 330 項,使用者 2026-11-06 裁定) | 本檔 |
 | R-SCAN-SCOPE-01 | 掃描範圍只算 dependencies:隔離安裝 `npm install --omit=dev`、`result.json` 之 `scope`、`result.md`／`待更新套件.md` 之範圍說明、`updateList` 只剩正式相依樹、範圍不受呼叫端 npm 設定影響〔子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯〕(Gitea #27,使用者裁定,2026-10-30 run01、run02) | 本檔 |
+| R-PW-ONLY-01 | Chromium 系瀏覽器之啟動一律經自有套件 `w-playwright`(對應其帳本 R-PW-ONLY 與 R-PW-WIRING):`src`、`test`、`toolg` 無 `playwright`／`playwright-core` 之直接匯入,`package.json` 不宣告之;唯一啟動點 `src/exsbom.mjs` 有接線測試(排程第 442 項,2026-11-13 任務 20261113103344 pm-sd) | 本檔 |
 
 ## R-BIN-ENSURE-01 外部執行檔之存放、下載、校驗與離線
 
@@ -98,7 +99,7 @@
 - **ex-sbom 分析失敗之偵測**：ex-sbom 分析失敗時仍回 200、畫面呈「無漏洞」（`spdx_sbom.go:253-267`、`create.go:125-127`）。本套件讀其 log（`exsbom-work/<子夾>/ex-sbom.log`），見副本寫入失敗、SBOM 解析或處理失敗、漏洞掃描失敗即 throw；LEV 查詢失敗只警告。throw 由 `captureExSbom` reject，`WScanDep` 標 `result.json` 之 `exsbom.ok=false`（R-EXSBOM-FAIL-01）。
 - **ex-sbom 隨 node 結束**：node 不論如何結束（含 `taskkill /F` 不加 `/T`、Ctrl+C、崩潰），ex-sbom 都會一併結束——libuv 以 Job Object 管理非 detached 子程序（2026-10-03 實測）。故不會留下 ex-sbom 孤兒，最多留下工作子夾（下次掃描清除）。
 - 需連外：GitHub（主幹清單與廠商 releases 資產，首次使用；可由 `W_BIN_MIRROR`/`W_BIN_OFFLINE` 改為離線）、npm registry（安裝掃描目標之相依）、grype/osv 漏洞資料庫。
-- 需 playwright 之 chromium（本套件相依 `playwright`）；ex-sbom 截圖跑無頭獨立 profile，與使用者瀏覽器無關。
+- 需 Playwright 受管之 headless shell（2026-11-13 起經自有套件 `w-playwright` 啟動，本套件不再直接相依 `playwright`，見 R-PW-ONLY-01）；ex-sbom 截圖跑無頭獨立 profile，與使用者瀏覽器無關。
 
 ## R-EXSBOM-FAIL-01 ex-sbom 之失敗只作廢截圖;意外結束之訊息附 log 之結束原因
 
@@ -413,3 +414,45 @@ M0 = run01 之碼(不傳環境副本且無驗證)12 案紅;M1 不移除環境變
 - **報告輸出前之換行壓縮**(既有行為):連續 3 個以上換行壓為 2 個,含說明內文.
 - **`業主` 一詞**(`src/report.mjs:46`「供業主查核」、README 與 `sgud/proc/process.md` 之說明)為通用角色詞,未改(改動會使「給與原本等價之選項時報告逐字相同」不成立);是否視為使用端字樣由主控裁定.
 - 預設 xlsx 說明為既有行為(無條件稱被標注之 xlsx 為誤報),未改.
+
+## R-PW-ONLY-01 Chromium 系瀏覽器之啟動一律經 w-playwright
+
+來源:主控立案(排程第 442 項,任務 20261113103344 pm-sd 遷移輪);設計為 w-playwright 之設計報告 §5.1 本套件之列,全庫盤點規則為其帳本 R-PW-ONLY、R-PW-WIRING(本條為本套件之落實).起因:Chromium 系瀏覽器(真 Chrome 153 起、完整 Chromium、Edge)每啟動一個新根行程即以錯誤密碼替目前 Windows 使用者呼叫一次 `LogonUser`,10 分鐘內 10 次即鎖帳號;`w-playwright` 於每次啟動合併出恰一串含守門功能 `AutofillAiWalletPrivatePasses` 之 `--disable-features`.本套件只用 headless shell(本即不觸發),仍一律經之,使啟動方式與全庫一致、日後改通道不致漏守門.
+
+### 規則(程式碼須長成什麼樣)
+
+1. **啟動點唯一且經 w-playwright**:瀏覽器只在 `src/exsbom.mjs` `captureExSbom` 內以 `wpw.launchChromium({ headless: true })` 啟動(`import wpw from 'w-playwright'`;使用端一律取主檔 default,不深層匯入).不傳 `channel`、`executablePath`(固定 Playwright 受管之 headless shell,不用系統 Chrome／Edge).不傳 `autoInstall`(預設關,維持修前「缺檔即啟動失敗、截圖失敗」之行為;取得瀏覽器見 README〈截圖用瀏覽器〉).
+2. **不直接匯入、不宣告 `playwright`／`playwright-core`**:`src`、`test`、`toolg` 之 `.mjs`／`.js`(含動態 `import()`、`require()`)命中數 0;`package.json` 之各類相依皆無 `playwright`、`playwright-core`;`dependencies` 有 `w-playwright`(`^1.0.1`).`playwright-core` 之版本由 `w-playwright` 精確釘住(1.64.1),本套件不另管.
+3. **打包**:`toolg/gDistRollup.mjs` 之 `external` 與 `globals` 以 `'w-playwright'` 取代 `'playwright'`(其餘標準寫法不動;不把 `w-playwright` 打進 dist,否則連帶要求可解析 `playwright-core`、繞開精確釘版).
+4. **接線測試**(R-PW-WIRING):以 `wpw.setBrowserTypeForTest` 斷言截圖啟動送出之選項含守門——`args` 恰一個 `--disable-features=`、為 `args` 之末、含 `AutofillAiWalletPrivatePasses`;並**斷言替身確被呼叫(次數 1)**(依賴樹有兩份 `w-playwright` 時替身可能空過).至少一案不用替身(真啟動 headless shell):`test/api-wsdEntry.test.mjs`「crash」案與 `test/WScanDep.test.mjs` 之 `captureExSbom` 組.
+5. **失敗行為**:`w-playwright` 拒絕啟動(`PWDEBUG` 為 inspector 值、`SELENIUM_REMOTE_URL` 有值、`playwright-core` 版本與其內附表不符、受管瀏覽器缺檔)時,依 R-EXSBOM-FAIL-01 只作廢截圖(`exsbom.ok=false`),`exsbom.error` 為 `w-playwright` 之固定詞彙(不含 Playwright 原訊息).
+6. **不另開守門之旁路**:不提供停用守門之選項(`w-playwright` 亦無);本套件不傳 `ignoreDefaultArgs`、`args`.
+
+### 盤點指令與站點全集
+
+| 盤點指令(可重跑) | 預期 | 判準 |
+| --- | --- | --- |
+| `rg -n --glob '*.{mjs,js}' --glob '!**/node_modules/**' --glob '!**/dist/**' "(from\s+\|import\(\s*\|require\(\s*)['\"\`]playwright(-core)?['\"\`/]" <本套件根>`(w-playwright 帳本 R-PW-ONLY 原式;防空集合:對 `w-playwright/src/_pw.mjs` 同式必命中) | 0 命中 | 已套(2026-11-13:0;對照 `_pw.mjs` 命中 2 行) |
+| `rg -n --glob '**/package.json' --glob '!**/node_modules/**' "\"playwright(-core)?\"\s*:" <本套件根>` | 0 命中 | 已套 |
+| Grep `wpw\.(launchChromium\|launchChromiumPersistent)\(` 於 `src/` | `src/exsbom.mjs` 一處(`captureExSbom`) | 已套;與接線測試逐點對照(一點一案) |
+| `toolg/gDistRollup.mjs` Grep `playwright` | 僅 `'w-playwright'`(`globals`、`external` 各一) | 已套 |
+
+### 對應測試
+
+| 項目 | 測試檔 | 說明 |
+| --- | --- | --- |
+| 規則 2、啟動點全集 | `test/unit-pwOnly.test.mjs`(5 案,不啟動瀏覽器) | 盤點正則抓得到靜態／動態／`require` 三式且不誤判 `w-playwright`;掃描檔數 ≥30 且含 `src/exsbom.mjs`(防空集合);`src`／`test`／`toolg` 0 命中;`package.json` 無 `playwright`／`playwright-core`、有 `w-playwright` 且安裝版 ≥1.0.1;`src` 之 `wpw.launchChromium(` 站點恰一處且在 `exsbom.mjs` |
+| 規則 1、4、5 | `test/api-wsdEntry.test.mjs`「…only through w-playwright, with the merged options carrying the logon guard (R-PW-WIRING)」 | 替身 `launch` 只收選項並拋錯(不啟動瀏覽器):次數 1、`headless:true`、無 `channel`、恰一個 `--disable-features=`、為 `args` 之末、含守門功能、`ignoreDefaultArgs` 非空;`WScanDep` 回傳 `'ok'`、`exsbom.ok=false`、錯誤非被攔截之 ex-sbom 啟動、不留 `pics`／`exsbom-work` |
+| 規則 4(不用替身) | 同檔「crash」案(扮演 ex-sbom 之 `fakeExSbom` 由瀏覽器請求觸發崩潰,真啟動 headless shell)、`test/WScanDep.test.mjs` | 真路徑經 `w-playwright` 啟動 headless shell 並完成截圖 |
+
+### 變異(2026-11-13 pm-sd;皆暫改後立即還原並以 Grep 回驗)
+
+- M1 啟動點改為不經 `wpw`(以拋錯函式取代 `wpw.launchChromium(...)`):接線案紅(替身呼叫 0 次,`seen.length` 斷言失敗).
+- M2 `src/exsbom.mjs` 加入 `import … from 'playwright-core'`:`unit-pwOnly`「0 hits」案紅.
+- M3 `package.json` `devDependencies` 加入 `playwright-core`:`unit-pwOnly`「not declare」案紅.
+- 修前紅:接線案在 `src` 尚未改時整檔 `before` 失敗(`playwright` 已自 `package.json`／`node_modules` 移除,`src/exsbom.mjs` 無法載入)——此為弱紅(原因是模組缺失而非斷言),故另以 M1 證明斷言本身能抓到「不經 `w-playwright`」.
+
+### 已知限制
+
+- 本套件之測試中,`WScanDep.test.mjs` 之 `captureExSbom` 組走到瀏覽器步驟之案(約 8 案,其中兩個同時執行案各啟動一次)每次 `captureExSbom` 即啟動一次 headless shell;`captureExSbom` 內部自行啟動、無注入瀏覽器之接縫,同檔共用瀏覽器須改 API(屬 headless shell,不觸發錯誤密碼計數,設計 §5.2 列為效能選做),本輪未改.
+- 守門對 headless shell 無可驗證之 `chrome://version`(headless shell 無此頁);生效以 `w-playwright` 之 `api-pwDrift`(命令列)與接線測試(選項)為證,錯誤密碼次數增量 0 為旁證.

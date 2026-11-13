@@ -2,7 +2,7 @@
 
 本檔記載當前已開發功能之最新狀態:各功能做到哪裡、對應之規則帳本條目與測試檔、已知缺口與待辦、最近一次驗證或發布之版本.只記現況,不寫過程(過程見 `sgud/exp/experience.md`).規則帳本為藍圖(`sgud/rule/rulebook.md`),兩者比對即知尚未做到者.
 
-套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.10;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正待主控複審並發布).相依 `wsemi` ^1.9.32(`package.json`,run03 升級).
+套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.28;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正已發布於較早版本).相依 `wsemi` ^1.9.59、`w-playwright` ^1.0.1(2026-11-13 起取代 `playwright`,見下列〈截圖用瀏覽器〉列;遷移輪待主控複審並發布).
 
 ## 功能現況
 
@@ -23,11 +23,14 @@
 | syft／grype／osv-scanner 單次時限(`W_SYFT_TIMEOUT` 3600 秒、`W_GRYPE_TIMEOUT` 1800 秒、`W_OSV_SCANNER_TIMEOUT` 600 秒,逾時樹狀結束;三工具改非同步,共用 `src/proc.mjs`) | 完成(2026-10-30 run02,Gitea #24 同類) | R-SCAN-TIMEOUT-01 | `test/api-scanTimeout.test.mjs`、`test/unit-scanTimeout.test.mjs`、`test/unit-proc.test.mjs`、`test/api-wsdEntry.test.mjs`、替身 `test/tools/hangTool.mjs` |
 | 掃描範圍只算 dependencies(隔離安裝 `npm install --omit=dev`;`result.json` 之 `scope: 'dependencies'`;`result.md`、`待更新套件.md` 寫明範圍;`updateList` 只剩正式相依樹;README〈掃描範圍〉與〈Breaking changes〉、`WScanDep` 之 JSDoc) | 完成(2026-10-30,Gitea #27,使用者裁定;不提供掃描開發工具之開關;run02 起範圍不受呼叫端 npm 設定影響:子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯) | R-SCAN-SCOPE-01 | `test/api-installScope.test.mjs`、`test/api-installScopeEnv.test.mjs`、`test/unit-installGuard.test.mjs`、`test/api-scanScope.test.mjs`(連網＋真 syft)、`test/api-wsdEntry.test.mjs`(指令、`scope`、整合案)、`test/unit-report.test.mjs`、`test/WScanDep.test.mjs`「test」、替身 `test/tools/fakeNpmRegistry.mjs`、`test/tools/scopeFixture.mjs` |
 | 隔離安裝沿用呼叫端專案之倉庫位址設定(`src/npmRegistry.mjs`;`WScanDep` 於 `fpIn` 所在資料夾取 `npm config list --json` 之生效 `registry`／`@scope:registry`,寫入 `fdOut/test/.npmrc`;環境變數 `W_NPM_CONFIG_TIMEOUT` 預設 60 秒;README〈隔離安裝沿用呼叫端專案之倉庫設定〉與〈Breaking changes〉) | 完成(2026-10-30,任務 20261030174519 run01,主控提出之 Gitea #27 run02 範圍外發現):只帶位址,不帶 include 等安裝集合設定與認證值;取得失敗(逾時、離開碼非 0、輸出非 JSON、無法啟動、npm 未列出 registry)即拋錯,不進入安裝、`fdOut` 不被建立;`result.*` 欄位不變 | R-NPM-REGISTRY-01 | `test/unit-npmRegistry.test.mjs`、`test/api-npmRegistry.test.mjs`(真實 npm＋假 registry 埠 8971~8973)、`test/api-wsdEntry.test.mjs`〈the registry settings of the calling project〉(埠 8975~8977)、替身 `test/tools/fakeNpm/`(`npm.cmd`＋`fakeNpm.mjs`) |
+| 截圖用瀏覽器經 `w-playwright` 啟動(`src/exsbom.mjs` 唯一啟動點 `wpw.launchChromium({ headless: true })`;`package.json` 無 `playwright`／`playwright-core`;`toolg/gDistRollup.mjs` 之 `external`／`globals` 為 `'w-playwright'`;README〈截圖用瀏覽器〉與〈Breaking changes〉) | 完成(2026-11-13,排程第 442 項,任務 20261113103344 pm-sd):守門參數一律由 `w-playwright` 加入;不自動安裝(維持修前行為,取得瀏覽器見 README);`PWDEBUG` inspector 值／`SELENIUM_REMOTE_URL`／`playwright-core` 版本與其內附表不符時拒絕啟動 → 只作廢截圖;`exsbom.error` 改為 `w-playwright` 之固定詞彙 | R-PW-ONLY-01 | `test/unit-pwOnly.test.mjs`(5 案,不啟動瀏覽器)、`test/api-wsdEntry.test.mjs`〈…only through w-playwright…(R-PW-WIRING)〉(替身)與「crash」案(真 headless shell)、`test/WScanDep.test.mjs` |
 | 重跑清除上次安裝殘留 | 完成(未動) | — | `test/unit-clearNpmState.test.mjs` |
 | osv-scanner 執行與離開碼 | 完成(2026-10-30 改經 `runTool` 非同步執行,離開碼判讀不變) | R-SCAN-TIMEOUT-01 規則 5 | `test/unit-runOsv.test.mjs` |
 
 ## 已知缺口與待辦
 
+- **`dist/`、`docs/dist/` 仍為遷移前之舊產物**(2026-11-13):`dist/w-scan-dep.umd.js` 仍 `require('playwright')`,而 `package.json` 已無 `playwright`;發布流程(`script.txt` 含 `gDistRollup`)重產後才改為 `require('w-playwright')`,**不可跳過建置直接發布**.以 `toolg/gDistRollup.mjs` 同選項另編至暫存目錄驗證:產物 `require("w-playwright")`、載入後為函數且帶 `ensureBins`.
+- 截圖測試(`WScanDep.test.mjs` 之 `captureExSbom` 組約 8 案)每案各啟動一次 headless shell;`captureExSbom` 無注入瀏覽器之接縫,同檔共用須改 API,本輪未改(headless shell 不觸發錯誤密碼計數,屬效能選做).
 - **`dist/`、`docs/dist/` 仍為舊產物**(2026-11-06 sd330):含舊預設文字(使用端之系統名與 vue 現況規劃),由發布流程(`script.txt`)重產後才中立;本輪未重產(`cleanFolder` 會先刪 `dist`、`docs`,失敗無法以 git 還原)。以新 `src/` 另編至暫存目錄之 UMD 已驗證不含舊字樣。git 歷史與已發布之 npm 版本仍含舊文字,無法由本套件消除。
 - **使用端升版後須傳入報告用語**:要保留原本那份報告之措辭,傳 `systemName` 與 `packageNotes.vue`(README〈還原成升版前那份報告之措辭〉);未傳者 `result.md` 之上述文字變為中立。
 - 「業主」一詞(`src/report.mjs:46`「供業主查核」)為通用角色詞,未改;是否視為使用端字樣由主控裁定(R-REPORT-TEXT-01 已知限制)。
@@ -48,6 +51,8 @@
 - 「清除前次殘留之工作子夾」案之時序假設已修(2026-10-30 run02):占用者改由 `test/tools/holdDir.mjs` 等確被持有才往下;清除邏輯另有不經 ex-sbom 之確定性單元測試(`cleanStaleWork` 已匯出).
 
 ## 最近一次驗證
+
+2026-11-13(任務 20261113103344 pm-sd,截圖用瀏覽器改經 `w-playwright`):**全套 `npm test`(`--lock`)376 通過／0 失敗／0 略過**(約 1 分 44 秒;原 370 + 新增 6 案:`unit-pwOnly` 5、`api-wsdEntry` 接線 1);含真實掃描「test」案(真 syft/grype/osv-scanner/ex-sbom,經 `w-playwright` 啟動 headless shell 並產出截圖)與 `captureExSbom` 組 10 案;全套前後錯誤密碼次數 0→0;變異 M1(啟動點不經 `wpw`)、M2(`src` 直接匯入 `playwright-core`)、M3(`package.json` 宣告 `playwright-core`)皆被抓到;R-PW-ONLY 盤點 0 命中(防空集合對照命中 2 行);以同選項另編 UMD 至暫存目錄,`w-playwright` 為 external;標準圖 0 張(本套件無像素基準).報告:`C:\opensrcOper\dnow\20261113103344\agent-out\pm-sd-修正報告.md`.
 
 2026-11-06(任務 20261106102000 sd330,報告用語由呼叫端傳入):**全套 `npm test`(`--lock`)兩次皆 0 失敗**——第 1 次 359 通過(約 3 分 14 秒,審查前),第 2 次(最終碼)370 通過(約 1 分 49 秒;原 235 + 新增 135 案:`unit-reportOpt`、`unit-scanOpt`、`unit-readmeRestore`、`api-wsdEntry` 2 案,另改 `WScanDep.test.mjs` 1 案);修前紅(未改 `src` 之碼跑新測試)`unit-reportOpt`＋`api-wsdEntry` 受影響案 23 紅/33 綠(綠者為「非預期值視為未給」之守護案)、`unit-scanOpt` 因模組不存在整檔無法載入;變異 34 個(M1~M33、M12b)皆被抓到(M18 初版存活,補「不成為 unhandledRejection」案後被抓);eslint 變更行 0 error(`config.mjs`、`report.mjs` 既有舊問題 7 項未動);以新 `src` 另編 UMD 至暫存目錄驗證可打包、不含舊字樣;唯讀獨立審查(sonnet)17 項,6 項屬實已修、4 項屬實以文件註明、1 項屬實未修需裁示(`dist/`)、其餘 6 項不構成或依派工保留。報告:`C:\opensrcOper\dnow\20261106102000\agent-out\sd330-修正報告.md`.
 

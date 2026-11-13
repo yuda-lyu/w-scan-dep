@@ -150,6 +150,15 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 - quiet-run 以 cmd 執行指令，`node_modules/.bin/mocha` 這種 POSIX 相對路徑會報「不是內部或外部命令」，單檔改用 `node node_modules/mocha/bin/mocha.js --no-parallel <檔> --timeout 180000`。
 - 全套測試中 `npm error code E404`／`EJSONPARSE` 等輸出是 `api-npmRegistry`／`api-npmInstall` 的負向案例（假 registry、壞 `package.json`），不是失敗。
 
+## 截圖用瀏覽器改經 w-playwright（2026-11-13，任務 20261113103344 pm-sd，排程第 442 項）
+
+- **起因**：Chromium 系瀏覽器（真 Chrome 153 起、完整 Chromium、Edge）每啟動一個新根行程即以錯誤密碼替目前 Windows 使用者呼叫一次 `LogonUser`，10 分鐘內 10 次即鎖帳號。本套件只用 headless shell（不觸發），仍依全庫統一遷移：`src/exsbom.mjs` 改 `wpw.launchChromium({ headless: true })`，`package.json` 以 `w-playwright` 取代 `playwright`（規則見 R-PW-ONLY-01）。
+- **改相依後無法再跑「修前基線」**：移除 `playwright`、`npm i` 之後，修前之 `src/exsbom.mjs` 因 `playwright` 無法解析而整檔載不起來，所有 import 它之測試（`WScanDep.test.mjs`、`api-wsdEntry.test.mjs` 等）都會紅。要取修前基線須在改 `package.json` 之前先跑；本輪未先跑，故「修前紅」只能是弱紅（模組缺失），以「暫把啟動點改為不經 `wpw`」之變異證明接線斷言真能抓到。下回遷移同類相依，先跑一次基線再動 `package.json`。
+- **接線測試不必啟動瀏覽器**：`wpw.setBrowserTypeForTest({ launch: async (o) => { seen.push(o); throw … } })` 只收合併後之選項並拋錯；`captureExSbom` 之瀏覽器失敗只作廢截圖，`WScanDep` 仍回 `'ok'`，故可在 `api-wsdEntry` 以 `fakeExSbom` 扮演 ex-sbom 走到瀏覽器步驟。被測 `src` 是 `fdPkg`（`test/_tmp/wsdEntry/pkg`）之複本，裡頭 `import 'w-playwright'` 沿目錄往上解析到本 repo 之 `node_modules/w-playwright`，與測試檔取同一份模組，故替身對其生效；仍須斷言替身次數（空過風險）。
+- **測試檔內不可留下可被盤點正則命中之字面**：`unit-pwOnly` 的正則樣本（`from '…'` 之直接匯入字串）若原樣寫在測試檔，掃描 `test/` 會命中自己；改以 `'play' + 'wright'` 插值組字。
+- **headless shell 不受 `W_PLAYWRIGHT_LOGON_GUARD` 檢查**：登入守門只對非 headless shell 之啟動（`_logonGuard.mjs` 種類判定）；本套件 `launchChromium({ headless: true })` 無 `channel`／`executablePath` 即為 headless shell，守門開啟（派工已設 `=1`）亦不讀錯誤次數、不拒絕。
+- **README／sgud 以外之文字不可寫使用端專案名**（公開庫）：註解只寫「使用端回報」，不寫排程項目編號之外之專案資訊。
+
 ## 報告用語由呼叫端傳入（2026-11-06，任務 20261106102000 sd330，排程第 330 項）
 
 - **第三參數由「一律拒收」改為接受 `opt`**（先前 `opt` 整個移除，見上文〈`opt` 整個移除〉）：報告用語只能由呼叫端傳入，環境變數不適合（多行 markdown 說明）、新增具名匯出會改變 UMD 形態（E2），故沿用第三參數；`opt.fdTools` 仍為已移除之鍵（V6，給了或取值拋錯皆 reject），舊呼叫端不會靜默被忽略。

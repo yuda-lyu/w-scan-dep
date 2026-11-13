@@ -163,7 +163,34 @@ let r = await wsd(fpIn, fdOut, opt)
 - 掃描工具存於快取，**不在** `fdOut` 內(不再有 `fdOut/tools`)；快取位置若落在 `fdOut` 之 `test`、`pics` 或 `exsbom-work` 內會被拒絕(syft 會把 `test/` 內之工具編入 SBOM)。
 - 更新工具版本(維護者，需連網)：`node toolg/genBinManifest.mjs`(`--dry-run` 只列差異、`--only syft,grype`、`--tag syft=v1.55.0`)，查各廠商最新版、下載資產與 checksums 並核對後寫入 `bin/manifest.json`，推 GitHub 主幹即生效。
 
+## 截圖用瀏覽器(w-playwright)
+
+ex-sbom 之截圖由瀏覽器操作網頁產生。本套件**一律經自有套件 [w-playwright](https://www.npmjs.com/package/w-playwright) 啟動**瀏覽器(`wpw.launchChromium({ headless: true })`)，不直接依賴 `playwright`／`playwright-core`。
+
+- **安裝即帶入 playwright-core 1.64.1**：`npm i w-scan-dep` 會經 `w-playwright` 帶入精確版本之 `playwright-core`。呼叫端不需、也不應另裝 `playwright` 或 `playwright-core`。
+- **瀏覽器之取得**：截圖固定用 Playwright 受管之無頭 Chromium(headless shell)，**不使用**系統安裝之 Google Chrome 或 Edge，故不需安裝它們。受管瀏覽器不含於 npm 包，亦**不會自動下載**(`autoInstall` 預設關)；請於部署前或首次掃描前呼叫一次 `ensureChromium()`：
+
+```alias
+import wpw from 'w-playwright'
+
+await wpw.ensureChromium() //取得 headless shell(已存在即不重複下載)
+```
+
+  不要用 `npx playwright install`(依賴樹中他版 Playwright 被提升時，會下載到不同版本之瀏覽器)。未安裝時啟動失敗，ex-sbom 截圖即失敗(`result.json` 之 `exsbom.ok` 為 `false`，syft、grype、osv-scanner 之結果照常寫出，見上方〈ex-sbom 截圖失敗〉)。
+- **離線**：於可連網之機器以同版 `w-playwright` 執行 `ensureChromium()`，把 Playwright 之瀏覽器資料夾(Windows 預設 `%LOCALAPPDATA%\ms-playwright` 內之 `chromium_headless_shell-1248` 等)複製到目標機，並以環境變數 `PLAYWRIGHT_BROWSERS_PATH` 指向該資料夾。**此變數須在載入本套件前設定**(Playwright 於模組載入時決定瀏覽器目錄，執行期改動不生效)。
+- **一律加入之守門參數與原因**：Windows 上 Chromium 153 起，每啟動一個新的瀏覽器根行程，即以無效密碼替目前使用者呼叫一次 `LogonUser`(安全性紀錄 4625、錯誤密碼次數 +1；本機原則 10 分鐘內 10 次即鎖定帳號)。停用 Chromium 功能 `AutofillAiWalletPrivatePasses` 即不再發生。`w-playwright` 於每次啟動之命令列**恰給一個** `--disable-features`(Playwright 預設清單＋`AutofillAiWalletPrivatePasses`＋呼叫端自給者)，並去掉 Playwright 預設之那一串；不提供停用之選項。本套件使用之 headless shell 本身不觸發此行為(無頭，錯誤密碼次數增量 0)，守門參數仍一律加入。
+- **不支援之環境變數**：`PWDEBUG` 為 inspector 模式之值、`SELENIUM_REMOTE_URL` 有值時，`w-playwright` 拒絕啟動(會使守門失效)，ex-sbom 截圖即失敗(見上)。可設環境變數 `W_PLAYWRIGHT_LOGON_GUARD=1` 啟用 `w-playwright` 之執行期登入守門，細節見其說明；本套件啟動之 headless shell 不受其檢查。
+- 接線測試：`test/api-wsdEntry.test.mjs` 以 `wpw.setBrowserTypeForTest` 斷言截圖之瀏覽器經 `w-playwright` 啟動且選項含守門；`test/unit-pwOnly.test.mjs` 斷言 `src`、`test`、`toolg` 無 `playwright`／`playwright-core` 之直接匯入，且 `package.json` 不宣告之。
+
 ## Breaking changes
+
+### 截圖用瀏覽器改經 w-playwright 啟動(2026-11-13)
+
+- **相依變更**：`dependencies` 移除 `playwright`，新增 `w-playwright`(`^1.0.1`；其 `playwright-core` 精確 1.64.1，與先前實裝之 Playwright 1.64.1 同版，受管瀏覽器之版本與標準截圖樣式不變)。呼叫端專案若因本套件而依賴樹中有 `playwright`，現已不再由本套件帶入。
+- **啟動之命令列多一個合併後之 `--disable-features`**(含守門功能，見〈截圖用瀏覽器〉)；其餘選項(`headless: true`、全新臨時設定檔)不變。
+- **新增之失敗情形**：`PWDEBUG` 為 inspector 模式之值、`SELENIUM_REMOTE_URL` 有值，或實裝之 `playwright-core` 版本不是 1.64.1(例如依賴樹以 overrides 換版)時，瀏覽器啟動被拒，ex-sbom 截圖失敗(`exsbom.ok === false`)，其餘結果照常寫出。
+- **`exsbom.error` 之文字變更**：瀏覽器啟動失敗時，原因改為 `w-playwright` 之固定詞彙(如 `managed browser (headless-shell) is not installed: call ensureChromium({ kind: 'headless-shell' }) or set opt.autoInstall to true`、`browser launch failed`)，不再附 Playwright 之原始訊息(其含完整命令列與設定檔路徑)。呼叫端若以 Playwright 原訊息判讀，請改依本文字或先呼叫 `ensureChromium()`。
+- 深層匯入 `src/exsbom.mjs` 者：須能解析 `w-playwright`(隨本套件安裝)。
 
 ### 報告預設文字改為中立，系統名與套件說明由呼叫端傳入(2026-11-06)
 

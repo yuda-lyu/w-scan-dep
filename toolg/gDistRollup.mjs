@@ -16,7 +16,7 @@ rollupFiles({
         'node:url': 'url',
         'node:fs/promises': 'fs/promises',
         'node:child_process': 'child_process',
-        'playwright': 'playwright',
+        'w-playwright': 'w-playwright',
         // wsemi(fsEnsureBins)打包進來後所用之 node 內建模組;import.meta.url 於輸出被換為 pathToFileURL(__filename),亦需 url
         'url': 'url',
         'fs': 'fs',
@@ -32,7 +32,7 @@ rollupFiles({
         'node:url',
         'node:fs/promises',
         'node:child_process',
-        'playwright',
+        'w-playwright',
         'url',
         'fs',
         'path',
