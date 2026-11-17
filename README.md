@@ -156,7 +156,22 @@ let r = await wsd(fpIn, fdOut, opt)
 - 環境變數：
   - `W_BIN_CACHE=<資料夾>`：快取改放 `<資料夾>/w-scan-dep/`(套件所在之 `node_modules` 唯讀時使用，多個專案可共用同一資料夾；原 `opt.fdTools` 由此取代)。
   - `W_BIN_MIRROR=<資料夾或 http(s) 網址>`：內網鏡像，先找鏡像再連 GitHub；結構為 `<鏡像>/w-scan-dep/<sha256>/<檔名>`。鏡像之檔同樣以清單校驗，不符即不用。
-  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像(清單用 npm 包內之基準清單)；缺檔時錯誤(`E_OFFLINE_MISSING`)會列出缺哪些檔、sha256、大小與應放之完整路徑。
+  - `W_BIN_OFFLINE=1`：不連網，只用快取與鏡像(清單用 npm 包內之基準清單)；缺檔時拋出 `E_OFFLINE_MISSING`，錯誤訊息只列缺哪些檔之檔名與準備方法(不帶 sha256 與路徑)，各缺檔之 sha256、大小與應放之位置(`cachePath` 為快取內之路徑、設了鏡像時 `mirrorPath` 為鏡像內之路徑)、來源網址在錯誤物件之 `err.missing[]`，讀取方式見下。
+- 離線缺檔時之放置位置：自 `err.missing[]` 讀取(每項有 `name`、`sha256`、`size`、`cachePath`、`mirrorPath`、`url`；自壓縮檔解出者另有 `member` 與 `archive`)，把該檔放到 `cachePath` 或 `mirrorPath` 即可：
+
+```alias
+import wsd from 'w-scan-dep'
+
+try {
+    await wsd.ensureBins()
+}
+catch (err) {
+    if (err.code === 'E_OFFLINE_MISSING') {
+        console.log(err.missing) //[ { name, sha256, size, cachePath, mirrorPath, url, member, archive, ... } ]
+    }
+}
+```
+
 - 離線部署：
   1. 在可連網之電腦設 `W_BIN_CACHE=<空資料夾>`，呼叫 `wsd.ensureBins()` 一次(`import wsd from 'w-scan-dep'`)。
   2. 把該資料夾整個帶到內網電腦，設 `W_BIN_MIRROR=<該資料夾>`(全離線時另設 `W_BIN_OFFLINE=1`)。注意離線時用基準清單：其所載之版本為該 npm 包發布時之版本，連網機器若取到較新之主幹清單，兩邊所取得之版本會不同；要完全一致請在連網機器以同一版套件、`W_BIN_OFFLINE=1` 搭配 `W_BIN_MIRROR` 預先取得，或升到含新基準清單之套件版本。

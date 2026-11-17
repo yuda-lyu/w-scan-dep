@@ -220,6 +220,8 @@ describe(`ensureBins`, function() {
         let cacheDir2 = newDir('cache')
         let err = await catchErr(() => ensureBins({ cacheDir: cacheDir2, fetch: fetchBan, mirror, offline: true, names: f0.name }))
         assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
+        assert.strict.deepStrictEqual(err.missing.map((v) => [v.name, v.mirrorPath]), [[f0.name, fpBad]]) //缺者即被竄改之鏡像檔, 鏡像位置在missing(V20: 不在訊息)
+        assert.strict.equal(err.message.includes(mirror), false, err.message)
         assert.strict.deepStrictEqual(cacheFiles(cacheDir2), [])
     })
 
@@ -234,20 +236,84 @@ describe(`ensureBins`, function() {
         assert.strict.deepStrictEqual(urls, [`${RAW}${TRUNK}`]) //資產皆取自鏡像
     })
 
-    it(`should reject offline with E_OFFLINE_MISSING naming each file, sha256, size and the cache path when nothing is available (T6, O3, E3)`, async function() {
+    //V20(訊息不帶值): 訊息只含各檔名與準備方法, 不含sha256(最終檔與壓縮檔)、大小、快取與鏡像路徑; 各檔之sha256、大小、應放位置、來源改由err.missing[]之結構欄位提供(O3、O5、T6, 2026-11-18)
+    let sizeOf = (f) => (f.extract ? f.extract.size : f.size)
+    let wantMissing = (f, cacheDir, mirror) => {
+        return {
+            name: f.name,
+            sha256: sha(f),
+            size: sizeOf(f),
+            cachePath: path.join(cacheDir, sha(f), f.name),
+            mirrorPath: mirror ? path.join(mirror, 'w-scan-dep', sha(f), f.name) : null,
+            url: f.extract ? null : f.url, //直接下載之檔才有url; 解壓而得者之來源為壓縮檔(archive)
+            member: f.extract ? f.extract.member : null,
+            archive: f.extract ? { sha256: f.sha256, size: f.size, url: f.url, mirrorPath: mirror ? path.join(mirror, 'w-scan-dep', f.sha256, path.posix.basename(f.url)) : null } : null,
+            parts: null,
+            bundle: null,
+        }
+    }
+    let pickMissing = (m) => {
+        return {
+            name: m.name,
+            sha256: m.sha256,
+            size: m.size,
+            cachePath: m.cachePath,
+            mirrorPath: m.mirrorPath,
+            url: m.url,
+            member: m.member,
+            archive: m.archive ? { sha256: m.archive.sha256, size: m.archive.size, url: m.archive.url, mirrorPath: m.archive.mirrorPath } : null,
+            parts: m.parts,
+            bundle: m.bundle,
+        }
+    }
+    let noValueInMessage = (err, dirs) => {
+        for (let f of A.manifest.files) {
+            for (let v of [sha(f), f.sha256, f.url, `${sizeOf(f)} bytes`]) {
+                assert.strict.equal(err.message.includes(v), false, `message must not carry ${v}: ${err.message}`)
+            }
+        }
+        assert.strict.equal(/[0-9a-f]{64}/i.test(err.message), false, `message must not carry any sha256: ${err.message}`)
+        for (let d of dirs) {
+            assert.strict.equal(err.message.includes(d), false, `message must not carry ${d}: ${err.message}`)
+        }
+    }
+
+    it(`should reject offline with E_OFFLINE_MISSING naming each file in the message and giving sha256, size and the cache path in err.missing when nothing is available (T6, O3, O5, E3, V20)`, async function() {
         let cacheDir = newDir('cache')
         let err = await catchErr(() => ensureBins({ cacheDir, fetch: fetchBan, mirror: '', offline: true }))
         assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
-        for (let f of A.manifest.files) { //離線時用基準清單A
-            let size = f.extract ? f.extract.size : f.size
+        //訊息: 含各檔名(離線時用基準清單A)與準備方法; 不含sha256、大小、路徑與網址
+        for (let f of A.manifest.files) {
             assert.strict.equal(err.message.includes(f.name), true, err.message)
-            assert.strict.equal(err.message.includes(sha(f)), true, err.message)
-            assert.strict.equal(err.message.includes(`${size} bytes`), true, err.message)
-            assert.strict.equal(err.message.includes(path.join(cacheDir, sha(f), f.name)), true, err.message)
         }
-        assert.strict.deepStrictEqual(err.missing.map((v) => [v.name, v.sha256, v.cachePath]), A.manifest.files.map((f) => [f.name, sha(f), path.join(cacheDir, sha(f), f.name)]))
+        assert.strict.equal(err.message.includes('missing field of this error'), true, err.message) //準備方法: 放置位置見err.missing
+        noValueInMessage(err, [cacheDir, fdt])
+        //結構欄位: 逐檔之名稱、sha256、大小、cachePath(無鏡像時mirrorPath為null)、來源(直接下載之url或壓縮檔之archive與member), 依清單順序
+        assert.strict.equal(Array.isArray(err.missing), true)
+        assert.strict.deepStrictEqual(err.missing.map(pickMissing), A.manifest.files.map((f) => wantMissing(f, cacheDir, null)))
+        for (let m of err.missing) {
+            assert.strict.deepStrictEqual(m.reasons, []) //無鏡像: 無拒用之說明
+        }
         assert.strict.deepStrictEqual(urls, [])
         assert.strict.equal(srv.hits.length, 0)
+        assert.strict.deepStrictEqual(cacheFiles(cacheDir), [])
+    })
+
+    it(`should give the mirror path in err.missing, and not in the message, when the mirror is set but holds none of the files (T6, O3, O5, V20)`, async function() {
+        let cacheDir = newDir('cache')
+        let mirror = newDir('mirror') //指定而無任何檔之鏡像
+        fs.mkdirSync(mirror, { recursive: true })
+        let err = await catchErr(() => ensureBins({ cacheDir, fetch: fetchBan, mirror, offline: true }))
+        assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
+        for (let f of A.manifest.files) {
+            assert.strict.equal(err.message.includes(f.name), true, err.message)
+        }
+        noValueInMessage(err, [cacheDir, mirror])
+        assert.strict.deepStrictEqual(err.missing.map(pickMissing), A.manifest.files.map((f) => wantMissing(f, cacheDir, mirror)))
+        for (let m of err.missing) { //鏡像無此檔(非拒用)故無說明
+            assert.strict.deepStrictEqual(m.reasons, [])
+        }
+        assert.strict.deepStrictEqual(urls, [])
         assert.strict.deepStrictEqual(cacheFiles(cacheDir), [])
     })
 
@@ -300,7 +366,9 @@ describe(`ensureBins`, function() {
             return catchErr(() => ensureBins({ fetch: fetchBan }))
         })
         assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
-        assert.strict.equal(err.message.includes(path.join(envRoot2, 'w-scan-dep')), true, err.message)
+        //應放位置(V20: 不在訊息, 在err.missing[].cachePath): 由W_BIN_CACHE衍生之<W_BIN_CACHE>/<套件>/<sha256>/<name>, 每個缺檔皆是
+        assert.strict.deepStrictEqual(err.missing.map((v) => [v.name, v.cachePath]), A.manifest.files.map((f) => [f.name, path.join(envRoot2, 'w-scan-dep', sha(f), f.name)]))
+        assert.strict.equal(err.message.includes(envRoot2), false, err.message)
         assert.strict.deepStrictEqual(urls, [])
 
         //O4: 設W_BIN_CACHE取得所得之資料夾即為鏡像(結構相同)

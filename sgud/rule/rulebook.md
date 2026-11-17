@@ -70,7 +70,7 @@
 | T3 | `test/api-ensureBins.test.mjs` | 本機 HTTP 伺服器扮 GitHub(主幹清單與標籤資產):首次下載→校驗→快取;第二次只取清單、不再下載資產;離線零請求 |
 | T4 | 同上 | 同長度竄改、短少、解出檔雜湊錯、404 → `E_HASH_MISMATCH`/`E_SIZE_MISMATCH`/`E_HTTP`,不留檔 |
 | T5 | 同上 | `W_BIN_MIRROR` 本地資料夾:離線取得;鏡像檔被竄改→`E_OFFLINE_MISSING`;連網時鏡像優先於 GitHub |
-| T6 | 同上 | `W_BIN_OFFLINE=1` 無快取無鏡像→`E_OFFLINE_MISSING`,訊息含檔名、sha256、大小、應放路徑 |
+| T6 | 同上 | `W_BIN_OFFLINE=1` 無快取無鏡像→`E_OFFLINE_MISSING`;斷言 `err.code` 與 `err.missing[]` 之欄位(名稱、sha256、大小、`cachePath`、`mirrorPath`〔有鏡像時〕、`url`、`member`、`archive`),訊息只斷言含檔名、**不含** sha256、大小與路徑(V20;2026-11-18 wsemi 1.9.64 起;另有指定空鏡像之案驗 `mirrorPath`) |
 | T7 | 同上 | 快取檔同長度竄改、截短→重新取得 |
 | T8 | 同上 | 主幹清單 404、非 JSON、schema 錯→用基準清單 |
 | 套件根與 cwd 無關、不轉傳 `floatingManifestUrl` | 同上 | 子行程於他處 cwd 載入;傳入非本 repo 之網址仍取標準主幹清單 |
