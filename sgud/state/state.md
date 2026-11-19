@@ -2,7 +2,7 @@
 
 本檔記載當前已開發功能之最新狀態:各功能做到哪裡、對應之規則帳本條目與測試檔、已知缺口與待辦、最近一次驗證或發布之版本.只記現況,不寫過程(過程見 `sgud/exp/experience.md`).規則帳本為藍圖(`sgud/rule/rulebook.md`),兩者比對即知尚未做到者.
 
-套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.28;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正已發布於較早版本).相依 `wsemi` ^1.9.59、`w-playwright` ^1.0.1(2026-11-13 起取代 `playwright`,見下列〈截圖用瀏覽器〉列;遷移輪待主控複審並發布).
+套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.28;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正已發布於較早版本).相依 `wsemi` ^1.9.70、`w-playwright` ^1.0.1(2026-11-13 起取代 `playwright`,見下列〈截圖用瀏覽器〉列;遷移輪待主控複審並發布).
 
 ## 功能現況
 
@@ -51,6 +51,8 @@
 - 「清除前次殘留之工作子夾」案之時序假設已修(2026-10-30 run02):占用者改由 `test/tools/holdDir.mjs` 等確被持有才往下;清除邏輯另有不經 ex-sbom 之確定性單元測試(`cleanStaleWork` 已匯出).
 
 ## 最近一次驗證
+
+2026-11-19(任務 20261116102625 sdp492j,`wsemi` 升 ^1.9.70,埠號無效訊息改 V19 格式):**全套 `npm test`(`--lock`)377 通過／0 失敗**(約 2 分 50 秒);升版後改期望前 `test/unit-exsbom.test.mjs` 36 通過／1 失敗(`:493`,舊字面 `port is not an integer between 1 and 65535`),改為 `invalid port: must be an integer from 1 to 65535` 後該檔全綠;`src/` 無舊字面;`dist/`、`docs/dist/` 之打包產物仍含舊字面(發布流程重產,未手動動).報告:`C:\opensrcOper\dnow\20261116102625\agent-out\sdp492j-修正報告.md`.
 
 2026-11-13(任務 20261113103344 pm-sd,截圖用瀏覽器改經 `w-playwright`):**全套 `npm test`(`--lock`)376 通過／0 失敗／0 略過**(約 1 分 44 秒;原 370 + 新增 6 案:`unit-pwOnly` 5、`api-wsdEntry` 接線 1);含真實掃描「test」案(真 syft/grype/osv-scanner/ex-sbom,經 `w-playwright` 啟動 headless shell 並產出截圖)與 `captureExSbom` 組 10 案;全套前後錯誤密碼次數 0→0;變異 M1(啟動點不經 `wpw`)、M2(`src` 直接匯入 `playwright-core`)、M3(`package.json` 宣告 `playwright-core`)皆被抓到;R-PW-ONLY 盤點 0 命中(防空集合對照命中 2 行);以同選項另編 UMD 至暫存目錄,`w-playwright` 為 external;標準圖 0 張(本套件無像素基準).報告:`C:\opensrcOper\dnow\20261113103344\agent-out\pm-sd-修正報告.md`.
 

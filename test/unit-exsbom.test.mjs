@@ -490,7 +490,7 @@ describe('exsbom portListeners 與 ownsPort(身分確認)', function() {
             assert.throws(() => ownsPort(PORT, ME, { exec: boom }), /查詢埠 8080 之監聽者失敗:.*boom/)
         })
         it('埠號不合法為失敗(拋錯)', function() {
-            assert.throws(() => portListeners(0, { exec: fakeExec({}) }), /查詢埠 0 之監聽者失敗:.*port is not an integer between 1 and 65535/)
+            assert.throws(() => portListeners(0, { exec: fakeExec({}) }), /查詢埠 0 之監聽者失敗:.*invalid port: must be an integer from 1 to 65535/)
         })
     })
 
