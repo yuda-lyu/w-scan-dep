@@ -1,9 +1,9 @@
 {
   "name": "w-scan-dep",
-  "version": "1.0.42",
+  "version": "1.0.43",
   "main": "dist/w-scan-dep.umd.js",
   "dependencies": {
-    "w-playwright": "^1.0.2",
+    "w-playwright": "^1.0.3",
     "wsemi": "^1.9.71"
   },
   "devDependencies": {
