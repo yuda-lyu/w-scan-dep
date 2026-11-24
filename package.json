@@ -1,13 +1,13 @@
 {
   "name": "w-scan-dep",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "main": "dist/w-scan-dep.umd.js",
   "dependencies": {
-    "w-playwright": "^1.0.3",
-    "wsemi": "^1.9.73"
+    "w-playwright": "^1.0.4",
+    "wsemi": "^1.9.74"
   },
   "devDependencies": {
-    "w-package-tools": "^1.1.29"
+    "w-package-tools": "^1.1.30"
   },
   "scripts": {
     "test": "mocha --parallel \"test/*.test.mjs\" --timeout 180000",
