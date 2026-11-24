@@ -197,6 +197,16 @@ await wpw.ensureChromium() //取得 headless shell(已存在即不重複下載)
 - **不支援之環境變數**：`PWDEBUG` 為 inspector 模式之值、`SELENIUM_REMOTE_URL` 有值時，`w-playwright` 拒絕啟動(會使守門失效)，ex-sbom 截圖即失敗(見上)。可設環境變數 `W_PLAYWRIGHT_LOGON_GUARD=1` 啟用 `w-playwright` 之執行期登入守門，細節見其說明；本套件啟動之 headless shell 不受其檢查。
 - 接線測試：`test/api-wsdEntry.test.mjs` 以 `wpw.setBrowserTypeForTest` 斷言截圖之瀏覽器經 `w-playwright` 啟動且選項含守門；`test/unit-pwOnly.test.mjs` 斷言 `src`、`test`、`toolg` 無 `playwright`／`playwright-core` 之直接匯入，且 `package.json` 不宣告之。
 
+## 測試之網路需求
+
+`npm test`(`mocha --parallel`)大部分案例不連外網(以本機假伺服器與假廠商檔驗證)，但下列整合測試需連網，**網路不穩時會紅**：
+
+- **掃描工具(syft、grype、osv-scanner、ex-sbom，合計約 170 MB)**：`test/WScanDep.test.mjs`(完整掃描)、`test/api-scanScope.test.mjs` 與 `test/unit-runOsv.test.mjs`(一案用真 osv-scanner)需真實之廠商檔。首次(快取 `bin-cache/` 為空)自 GitHub 下載並校驗。**取得集中於 `test/tools/binsAcquire.mjs` 之 `ensureTestBins(this)`**(需要真執行檔之測試檔於 `before` 呼叫，一次取齊全部工具)，其時限依下載預算推得(`BIN_BUDGET_MS`，無鏡像時約 65 分鐘，為每次嘗試皆耗盡上限之最壞情形；網路正常時約數十秒)，不沿用 mocha 之 180 秒；經 wsemi 1.9.75 起 `fsEnsureBins` 之跨程序鎖，`mocha --parallel` 之多個 worker 只下載一次，他方等候後讀快取。快取已備妥且設 `W_BIN_OFFLINE=1`(或 `W_BIN_MIRROR` 為本機資料夾並設離線)才完全不連網；僅快取已備妥而未設離線時，主幹模式仍會連 `raw.githubusercontent.com` 取主幹清單，清單較新時另下載新版工具。
+- **真 `npm install`**：`test/api-scanScope.test.mjs` 與 `test/WScanDep.test.mjs` 對真實之 npm registry(取 `npm_config_registry` 所指者)安裝夾具套件，再掃描已安裝之依賴。此為本套件核心功能(掃描已安裝之依賴)之整合測試，**不以假 registry 取代**；registry 不通或逾時時這兩個檔會紅。
+- **漏洞資料庫**：完整掃描另需 grype 與 osv-scanner 之漏洞資料來源(連網)。
+- **Windows 防火牆**：ex-sbom 自快取路徑啟動，Windows 對新路徑會詢問一次(選「取消」即可)。
+- **驗收「只下載一次」**：全綠不證明只下載一次(網速快時各自下載亦全綠)。清空 `bin-cache/` 並刪除舊事件檔(事件只附加不清空)後，設環境變數 `WSD_TEST_BINS_TRACE=<事件檔>` 再 `npm test`，以 `node test/tools/binsTrace.mjs <事件檔>` 判讀各工具之 `download` 事件須恰 1 次(離開碼 0 為通過)。
+
 ## Breaking changes
 
 ### 截圖用瀏覽器改經 w-playwright 啟動(2026-11-13)

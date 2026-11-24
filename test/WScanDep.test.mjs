@@ -4,13 +4,14 @@ import path from 'path'
 import http from 'http'
 import { spawnSync } from 'child_process'
 import wsd from '../src/WScanDep.mjs'
-import ensureBins from '../src/ensureBins.mjs'
+import { ensureTestBins } from './tools/binsAcquire.mjs'
 import { captureExSbom, listeningPorts, excludedPorts, pickPort } from '../src/exsbom.mjs'
 import { holdDir } from './tools/holdDir.mjs'
 
 
-//完整掃描(連網): 經 ensureBins 取得掃描工具(首次自 GitHub 下載並校驗, 存於 bin-cache/ 或 W_BIN_CACHE),
-//另需 npm registry 與 grype/osv 漏洞資料庫。ex-sbom 自快取路徑啟動, Windows 防火牆對新路徑會詢問一次(選「取消」即可)。
+//完整掃描(連網): 掃描工具由 ensureTestBins 於 before 一次取齊(唯一取得點, test/tools/binsAcquire.mjs; 首次自 GitHub 下載並校驗, 存於 bin-cache/ 或 W_BIN_CACHE;
+//mocha --parallel 下跨程序只下載一次, 時限對齊下載預算, R-BIN-ENSURE-01 規則 10), wsd 內之 ensureBins 隨後只命中快取。
+//另需 npm registry(真 npm install, 網路不穩時會紅)與 grype/osv 漏洞資料庫。ex-sbom 自快取路徑啟動, Windows 防火牆對新路徑會詢問一次(選「取消」即可)。
 //無網路之 ensureBins 行為見 api-ensureBins.test.mjs、api-wsdEntry.test.mjs(假廠商檔與本機伺服器)
 describe('WScanDep', function() {
     this.timeout(1800000) //首次執行須下載掃描工具與npm install,耗時較久
@@ -18,6 +19,11 @@ describe('WScanDep', function() {
     let fpIn = './test/prj/package.json'
     let fdOut = './test/output'
     let ks = ['date', 'source', 'outputDir', 'scope', 'tools', 'osv', 'grype', 'exsbom', 'updateList']
+
+    //wsd 於 it('test') 內隱式經 ensureBins 取得全部工具, 須在其前備妥(否則首次下載落在該案之時限內且與他檔之取得互搶)
+    before(async function() {
+        await ensureTestBins(this)
+    })
 
     it('test', async function() {
         let r = await wsd(fpIn, fdOut)
@@ -61,7 +67,7 @@ describe('WScanDep', function() {
 
 
 //建議w-scan-dep修正.md:ex-sbom 之工作目錄改為 fdOut 內專用子夾、服務埠自動選用且以監聽 PID 確認為本次子程序。
-//只用 test/output/tools 之 ex-sbom(已有防火牆規則,改埠不再詢問);假服務只綁 127.0.0.1(不觸發詢問)
+//ex-sbom 取自 ensureTestBins 之快取路徑(該路徑啟動過一次即有防火牆規則,改埠不再詢問);假服務只綁 127.0.0.1(不觸發詢問)
 describe('captureExSbom', function() {
     this.timeout(600000)
 
@@ -74,20 +80,6 @@ describe('captureExSbom', function() {
     let quiet = () => {}
     let exe = null
 
-    //ex-sbom 取自 ensureBins 之快取(離線, 須已校驗; 完整掃描過一次即有); 否則沿用舊版遺留之 test/output/tools(該路徑已有 Windows 防火牆規則, 不以新路徑啟動)
-    let findExe = async () => {
-        try {
-            return (await ensureBins({ offline: true, names: 'ex-sbom.exe' }))['ex-sbom.exe']
-        }
-        catch { /* 快取尚無 */ }
-        let fd = path.resolve('./test/output/tools/ex-sbom')
-        if (!fs.existsSync(fd)) return null
-        for (let v of fs.readdirSync(fd)) {
-            let p = path.join(fd, v, 'ex-sbom.exe')
-            if (fs.existsSync(p)) return p
-        }
-        return null
-    }
     let exPids = () => {
         let r = spawnSync(path.join(process.env.SystemRoot, 'System32', 'tasklist.exe'), ['/FI', 'IMAGENAME eq ex-sbom.exe', '/FO', 'CSV', '/NH'], { encoding: 'latin1' })
         return new Set((r.stdout || '').split(/\r?\n/).map((l) => l.match(/^"[^"]*","(\d+)"/)).filter(Boolean).map((m) => Number(m[1])))
@@ -96,9 +88,9 @@ describe('captureExSbom', function() {
     let freeBase = (from) => pickPort(listeningPorts(), excludedPorts(), from, 18180)
     let pids0
 
+    //ex-sbom 取自 ensureTestBins 之快取路徑(唯一取得點; 已備妥則只校驗, 快取為空時於此取得, 不再因無快取而略過本組)
     before(async function() {
-        exe = await findExe()
-        if (!exe) this.skip() //尚未完整掃描過、無已下載之 ex-sbom
+        exe = (await ensureTestBins(this))['ex-sbom.exe']
     })
 
     beforeEach(function() {

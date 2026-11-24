@@ -2,7 +2,7 @@
 
 本檔記載當前已開發功能之最新狀態:各功能做到哪裡、對應之規則帳本條目與測試檔、已知缺口與待辦、最近一次驗證或發布之版本.只記現況,不寫過程(過程見 `sgud/exp/experience.md`).規則帳本為藍圖(`sgud/rule/rulebook.md`),兩者比對即知尚未做到者.
 
-套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.28;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正已發布於較早版本).相依 `wsemi` ^1.9.70、`w-playwright` ^1.0.1(2026-11-13 起取代 `playwright`,見下列〈截圖用瀏覽器〉列;遷移輪待主控複審並發布).
+套件:`w-scan-dep`(`package.json` version 未動,現為 1.0.46;Gitea #24〔run01~03〕與 Gitea #27〔任務 20261030151214 run01,掃描範圍限定 dependencies〕之修正已發布於較早版本).相依 `wsemi` ^1.9.75(2026-11-25 排程第 632 項起;測試端跨程序鎖,見下列〈測試取得外部執行檔〉列)、`w-playwright` ^1.0.4(2026-11-13 起取代 `playwright`,見下列〈截圖用瀏覽器〉列).
 
 ## 功能現況
 
@@ -24,6 +24,7 @@
 | 掃描範圍只算 dependencies(隔離安裝 `npm install --omit=dev`;`result.json` 之 `scope: 'dependencies'`;`result.md`、`待更新套件.md` 寫明範圍;`updateList` 只剩正式相依樹;README〈掃描範圍〉與〈Breaking changes〉、`WScanDep` 之 JSDoc) | 完成(2026-10-30,Gitea #27,使用者裁定;不提供掃描開發工具之開關;run02 起範圍不受呼叫端 npm 設定影響:子行程環境移除抵消 `--omit=dev` 者＋安裝後驗證,有 dev 套件即拋錯) | R-SCAN-SCOPE-01 | `test/api-installScope.test.mjs`、`test/api-installScopeEnv.test.mjs`、`test/unit-installGuard.test.mjs`、`test/api-scanScope.test.mjs`(連網＋真 syft)、`test/api-wsdEntry.test.mjs`(指令、`scope`、整合案)、`test/unit-report.test.mjs`、`test/WScanDep.test.mjs`「test」、替身 `test/tools/fakeNpmRegistry.mjs`、`test/tools/scopeFixture.mjs` |
 | 隔離安裝沿用呼叫端專案之倉庫位址設定(`src/npmRegistry.mjs`;`WScanDep` 於 `fpIn` 所在資料夾取 `npm config list --json` 之生效 `registry`／`@scope:registry`,寫入 `fdOut/test/.npmrc`;環境變數 `W_NPM_CONFIG_TIMEOUT` 預設 60 秒;README〈隔離安裝沿用呼叫端專案之倉庫設定〉與〈Breaking changes〉) | 完成(2026-10-30,任務 20261030174519 run01,主控提出之 Gitea #27 run02 範圍外發現):只帶位址,不帶 include 等安裝集合設定與認證值;取得失敗(逾時、離開碼非 0、輸出非 JSON、無法啟動、npm 未列出 registry)即拋錯,不進入安裝、`fdOut` 不被建立;`result.*` 欄位不變 | R-NPM-REGISTRY-01 | `test/unit-npmRegistry.test.mjs`、`test/api-npmRegistry.test.mjs`(真實 npm＋假 registry 埠 8971~8973)、`test/api-wsdEntry.test.mjs`〈the registry settings of the calling project〉(埠 8975~8977)、替身 `test/tools/fakeNpm/`(`npm.cmd`＋`fakeNpm.mjs`) |
 | 截圖用瀏覽器經 `w-playwright` 啟動(`src/exsbom.mjs` 唯一啟動點 `wpw.launchChromium({ headless: true })`;`package.json` 無 `playwright`／`playwright-core`;`toolg/gDistRollup.mjs` 之 `external`／`globals` 為 `'w-playwright'`;README〈截圖用瀏覽器〉與〈Breaking changes〉) | 完成(2026-11-13,排程第 442 項,任務 20261113103344 pm-sd):守門參數一律由 `w-playwright` 加入;不自動安裝(維持修前行為,取得瀏覽器見 README);`PWDEBUG` inspector 值／`SELENIUM_REMOTE_URL`／`playwright-core` 版本與其內附表不符時拒絕啟動 → 只作廢截圖;`exsbom.error` 改為 `w-playwright` 之固定詞彙 | R-PW-ONLY-01 | `test/unit-pwOnly.test.mjs`(5 案,不啟動瀏覽器)、`test/api-wsdEntry.test.mjs`〈…only through w-playwright…(R-PW-WIRING)〉(替身)與「crash」案(真 headless shell)、`test/WScanDep.test.mjs` |
+| 測試取得外部執行檔(syft、grype、osv-scanner、ex-sbom,合計約 170 MB):集中取得、時限對齊下載預算、跨程序只下載一次(只改測試端,產品行為與輸出不變) | 完成(2026-11-25,排程第 632 項 A 類第二批,任務 20261124223109 tsd632):`wsemi` ^1.9.75;唯一取得點 `test/tools/binsAcquire.mjs` 之 `ensureTestBins(this)`(一次取齊 4 工具;hook 時限 `BIN_BUDGET_MS`＝3880000 毫秒,無鏡像;`totalMs` 600000＝wsemi 預設),`WScanDep.test.mjs`(`WScanDep`、`captureExSbom` 兩個 describe)、`api-scanScope.test.mjs`、`unit-runOsv.test.mjs` 於 `before` 呼叫,他檔不得靜態匯入 `src/ensureBins.mjs`;經 `src` 取得 wsemi 原始碼(不經 `dist`);驗收事件:`WSD_TEST_BINS_TRACE` ＋ `node test/tools/binsTrace.mjs`;真 `npm install` 保留(網路不穩時會紅,README〈測試之網路需求〉) | R-BIN-ENSURE-01 規則 10 | `test/api-ensureBinsLock.test.mjs`(4 個真行程同時取空快取,伺服器端每資產只被請求 1 次;wsemi 1.9.74 下紅)、`test/unit-binsAcquire.test.mjs`、替身/子行程 `test/tools/ensureBinsLockChild.mjs`、`test/tools/binsAcquire.mjs`、`test/tools/binsTrace.mjs` |
 | 重跑清除上次安裝殘留 | 完成(未動) | — | `test/unit-clearNpmState.test.mjs` |
 | osv-scanner 執行與離開碼 | 完成(2026-10-30 改經 `runTool` 非同步執行,離開碼判讀不變) | R-SCAN-TIMEOUT-01 規則 5 | `test/unit-runOsv.test.mjs` |
 
@@ -37,9 +38,10 @@
 
 - **`bin/manifest.json` 尚未推上 GitHub 主幹**(本輪不得 commit/push):推上前執行期取主幹清單得 404,退回 npm 包內基準清單(功能正常);推上並發布後主幹模式才完整生效.
 - 未發布:`dist/`、`docs/` 為發布時自動產製,本輪未重編(UMD 已以暫存輸出驗證 external/globals 與 default 匯出形態).
-- 完整掃描(`test/WScanDep.test.mjs`「test」案)需連網與 npm registry,且首次以快取新路徑啟動 ex-sbom(Windows 防火牆詢問),本輪 agent 未跑,由主控/使用者跑.
+- 完整掃描(`test/WScanDep.test.mjs`「test」案)與 `api-scanScope.test.mjs` 需連網(真 GitHub 下載、真 npm registry、漏洞資料庫),**網路不穩時會紅**(README〈測試之網路需求〉);首次以快取新路徑啟動 ex-sbom 會觸發 Windows 防火牆詢問.
+- 已知缺口(規則 10):接線守門只硬編 `WScanDep.test.mjs`、`api-scanScope.test.mjs`、`unit-runOsv.test.mjs` 三檔;新增需真執行檔之測試檔須自行於 `before` 呼叫 `ensureTestBins(this)`(細節見規則帳本);發布包解開之目錄(無 `.gitignore`／`.npmignore`)全套時 `unit-binManifest` 二案必敗(依賴二檔),屬配置限制,與取得方式無關.
 - 離線部署之版本一致性:離線(`W_BIN_OFFLINE=1`)用基準清單,其版本為該 npm 包發布時之版本;連網機器若取到較新之主幹清單,兩邊版本不同(README〈外部執行檔〉已說明作法).
-- 舊版遺留之 `test/output/tools/`(已 gitignore)仍被 `captureExSbom` 測試在快取尚無 ex-sbom 時沿用(該路徑已有防火牆規則);快取有 ex-sbom 後改用快取.
+- 舊版遺留之 `test/output/tools/` 已不再被任何測試使用(2026-11-25 起 `captureExSbom` 與 `unit-runOsv` 一律經 `ensureTestBins` 取得快取路徑之執行檔,`unit-binsAcquire` 掃描禁止測試自該路徑找工具與因缺工具而略過).快取路徑 `bin-cache/<sha256>/ex-sbom.exe` 之防火牆規則本機已有;**於新路徑(如發布包解開之目錄)首次啟動 ex-sbom 會觸發 Windows 防火牆詢問並留下規則**(2026-11-25 發布包配置驗證即留下兩條 Block 規則於 `tmp/tsd632/packrun/bin-cache/…/ex-sbom.exe`,路徑已清除,規則殘留無害,見回報).
 - 掃描工具時限之預設值依一個真實專案(1364 個元件)之冷啟動實測訂定(syft 81 秒、grype 冷資料庫 86 秒、osv-scanner 3.5 秒內);更大專案或更慢網路請以環境變數調高(README〈掃描工具時限〉).osv.dev 之卡住情形無法量測,以替身模擬.`updatelist.mjs` 之 `npm ls`(`spawnSync`,本機唯讀)刻意無時限.
 - `captureExSbom` 中「頁面操作先失敗、ex-sbom 結束事件稍後」之競態以等 exit 至多 2 秒緩解,無確定性測試(未證實根除).
 
@@ -51,6 +53,8 @@
 - 「清除前次殘留之工作子夾」案之時序假設已修(2026-10-30 run02):占用者改由 `test/tools/holdDir.mjs` 等確被持有才往下;清除邏輯另有不經 ex-sbom 之確定性單元測試(`cleanStaleWork` 已匯出).
 
 ## 最近一次驗證
+
+2026-11-25(任務 20261124223109 tsd632,排程第 632 項 A 類第二批,測試取得外部執行檔,只改測試端):**清空 `bin-cache` 後平行全套 `npm test`(`--lock`)399 通過/0 失敗/0 略過**(約 2 分,原 377＋新增 22 案:`unit-binsAcquire` 與 `api-ensureBinsLock`),**四個工具各只下載 1 次**(`WSD_TEST_BINS_TRACE` 事件之 `download` 各 1、fetch 起始各 1;3 個 worker 中 1 個下載、2 個命中快取);修前(原測試碼＋wsemi 1.9.74,清空快取)全套 377 通過但只跑兩個真下載檔時 syft 下載 2 次/2 行程(全綠不證明只下載一次);兩檔同時啟動之修後:各工具 1 次、另一行程 `lock-wait` 等候後命中快取;單檔:`api-scanScope` 冷快取 3 通過(各工具 1 次)、`WScanDep.test.mjs` 暖快取 13 通過(0 次下載);**發布包解開之目錄全套 397 通過/2 失敗/0 略過**(2 失敗為 `unit-binManifest` 二案,依賴發布包不含之 `.gitignore`／`.npmignore`,與本次無關);`api-ensureBinsLock`＋`unit-binsAcquire` 連跑 25 次全綠;變異 22 個(M1~M22)皆被抓到;eslint 變更檔 0 問題;private-guard CLEAN;獨立複審(sonnet,唯讀)9 項,皆屬實已處理.報告:`C:\opensrcOper\dnow\20261124223109\agent-out\tsd632-修正報告.md`.
 
 2026-11-19(任務 20261116102625 sdp492j,`wsemi` 升 ^1.9.70,埠號無效訊息改 V19 格式):**全套 `npm test`(`--lock`)377 通過／0 失敗**(約 2 分 50 秒);升版後改期望前 `test/unit-exsbom.test.mjs` 36 通過／1 失敗(`:493`,舊字面 `port is not an integer between 1 and 65535`),改為 `invalid port: must be an integer from 1 to 65535` 後該檔全綠;`src/` 無舊字面;`dist/`、`docs/dist/` 之打包產物仍含舊字面(發布流程重產,未手動動).報告:`C:\opensrcOper\dnow\20261116102625\agent-out\sdp492j-修正報告.md`.
 

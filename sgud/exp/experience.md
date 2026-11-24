@@ -171,4 +171,17 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 - **獨立審查（sonnet，唯讀）有用之發現**：①`dist/`、`docs/dist/` 仍含舊字樣（發布流程重產，本輪不手動重產，見 state.md）；②sgud 內「不接受第三參數」之敘述須同步（已改）；③「單行」只擋 CR／LF，U+2028／U+0085／NUL 通過（已擴為控制字元）；④`fdTools` 存取器拋錯被當成「未給」而放行（已改為拒絕）；⑤`funLog` 非函數時 debug 不警告（已補）；⑥中立第 1 點「使用 syft 掃描安裝依賴」可被讀成「掃描並安裝」（改為「掃描已安裝之依賴」）。未採：不跳脫 markdown／HTML（說明本即呼叫端自撰之 markdown，原預設說明就含 `<br>`；改於 README 註明）；README 範例與測試保留去名後的 vue 現況句（派工要求還原範例並以 golden 證明逐字等價）。
 - 全套 `npm test` 本輪 359 通過（含真實掃描「test」案約 2 分鐘）；`mocha --parallel` 下各檔獨立，`unit-readmeRestore` 讀 README、`unit-binManifest` 跑 `npm pack`，測試進行中不要改 README／sgud。
 - **wsemi 1.9.64 起 `E_OFFLINE_MISSING` 訊息不帶值（V20）**（2026-11-18）：離線缺檔之 sha256、大小、`cachePath`／`mirrorPath`、來源網址只在 `err.missing[]`；測試改以 `deepStrictEqual` 比對 `missing` 之全部欄位（含壓縮檔之 `archive`、鏡像之 `mirrorPath`），訊息改驗「含檔名、不含任何 64 位十六進位字串與路徑」。變異（大小加 1、`cachePath` 改用壓縮檔 sha256）會使兩案轉紅。套件端無字串包裝，故無須改 `src/`。
+## 測試取得外部執行檔：集中取得、時限對齊預算、跨程序只下載一次（2026-11-25，任務 20261124223109 tsd632，排程第 632 項）
+
+- **全綠不證明只下載一次**：修前（wsemi 1.9.74、清空 `bin-cache`）全套 377 通過，兩個真下載檔同時啟動時 16 案全綠，syft 卻被兩個 worker 各下載一次（以 `NODE_OPTIONS=--import` 預載模組包住 `globalThis.fetch`，記每次 `/releases/download/` 之起始 pid；wsemi 之下載每次請求取用全域 `fetch`，故包住即可涵蓋）。單跑全套多半撞不上（本機下載約 30 秒）；要穩定重現須只跑兩個真下載檔。
+- **本庫測試經 `src` 取得，不經 `dist`**：`src/ensureBins.mjs` 匯入 `wsemi/src/fsEnsureBins.mjs`，測試匯入 `src/…`，故升 wsemi 即生效（他庫之 `dist` 內嵌舊 wsemi 者不然）。以 `unit-binsAcquire` 釘住（宣告、安裝版、匯入形式、解析到單一副本、載入之核心含鎖）。
+- **預算算式以行為驗證，不釘 wsemi 原始碼字面**：初版以字串比對 `lockBudget` 之 `return` 行，複審指出漏報（`n`、`x` 推算被改而 `return` 行不變）與誤報（重排即紅）。改為 `api-ensureBinsLock` 讀持有者鎖檔 `owner.json` 之 `limitMs`（wsemi 實際用之 `lockBudget`）與 `calcBinBudgetMs` 對照，`totalMs` 取非預設值、壓縮檔與直接檔各一形狀。
+- **等候者可在持有者釋放鎖之前即命中快取而進入下一檔，瞬間同時有兩個 `.lock-*`**：初版假設「請求到達時快取夾內只有一個鎖」，20 次連跑 4 次紅（`limitMs` 讀到 `undefined`）；改為收集所有看到之 `limitMs` 值，與預期之兩種形狀值集合比對（並斷言兩值相異以保鑑別力），25 次連跑全綠。鎖之暫存夾 `.lock-<鍵>.new-<亂數>` 亦以 `.lock-` 起頭，列鎖須以 `^\.lock-[0-9a-f]{32}$` 篩。
+- **跨程序鎖測試以事件閘門同步**：本機假伺服器扣住所有資產回應，直到 N-1 個子行程回報 `lock-wait`（`onTrace`）才放行；鎖不存在時永遠等不到事件，逾上限（60 秒，取大以免高負載誤紅，有鎖時收到事件即放行不影響耗時）才放行並使斷言轉紅。wsemi 1.9.74 下此案紅（syft、grype 各 4 次、osv-scanner 3 次）。
+- **`totalMs` 不縮短**：初版明給 300000（以為「90 MB 以下單檔 100 KB/s 亦足」，90 MB 是 syft 解壓後大小，實際下載 zip；osv-scanner 59 MB 於 300000 毫秒需約 192 KB/s，比 wsemi 預設 600000 之 96 KB/s 更易逾時）。改回預設，預算 3880000 毫秒。
+- **「略過」會因配置而靜默不跑**：`unit-runOsv` 之真 osv-scanner 案原只找舊版遺留之 `test/output/tools` 並於找不到時 `this.skip()`，開發機有遺留所以一直綠，發布包解開之目錄全套得 1 pending 才發現。已改經 `ensureTestBins`，並以 `unit-binsAcquire` 掃描禁止測試 `skip` 與自舊路徑找工具。
+- **發布包解開之目錄跑全套**：`npm pack` 不含 `.gitignore`、`.npmignore`，`unit-binManifest` 二案（依賴二檔）必敗（全套時其中一案因 `npm pack --dry-run` 掃到平行測試正在增刪之 `test/_tmp` 而 `ENOENT`，單跑則為誘餌檔入包之斷言失敗），與取得方式無關；其餘 397 通過（最終碼，0 pending；首次得 394 通過＋1 pending 即 `unit-runOsv` 之略過）。另：於新路徑首次跑真實掃描會觸發 Windows 防火牆詢問並留下規則（本次留下兩條 Block）——要重跑發布包配置，請解到**同一路徑**以重用規則。
+- **`quiet-run --cwd <他處>` 之日誌仍寫在啟動時之 repo 根 `tmp/quiet-run/`**（不是 `--cwd` 之下）。
+- **`npm i wsemi@^1.9.75` 會補 `package.json` 檔尾換行並同步 `package-lock.json` 之根 `version`**（原檔無尾換行、鎖檔版本落後）；尾換行以 `tmp/` 腳本還原，鎖檔版本同步為 npm 自動寫入，未手改。
+
 - **wsemi 1.9.70 起 `execProcessPortPids(Sync)` 之埠號無效訊息改 V19 格式**（2026-11-19）：由 `port is not an integer between 1 and 65535` 改為 `invalid port: must be an integer from 1 to 65535`（wsemi `src/_execPortPids.mjs` 之 `MSG_PORT`，不帶輸入值）。本庫 `portListeners` 以 `查詢埠 <port> 之監聽者失敗:` 為前綴包裝（`src/exsbom.mjs`），前綴不變；`test/unit-exsbom.test.mjs` 之「埠號不合法為失敗(拋錯)」案原以正規式比對舊字面，升版後紅，期望改新字面（仍斷言拋錯）。先升版、不改期望、跑一次取紅，再改期望取綠。`src/` 之註解無引用舊訊息。

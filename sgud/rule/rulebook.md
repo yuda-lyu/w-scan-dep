@@ -35,6 +35,12 @@
 7. **`opt.fdTools` 已移除**(原則 14 不留相容層):`WScanDep` 之第三參數 `opt` 給了 `fdTools`(非 `undefined`／`null`,取值拋錯亦同)即 reject,訊息 `invalid opt.fdTools: removed, use env W_BIN_CACHE (see README 外部執行檔)`,指向 `W_BIN_CACHE`.(2026-11-06 起第三參數改為接受報告用語之選項 `systemName`、`packageNotes`、`debug`、`funLog`,見 R-REPORT-TEXT-01;原「第三參數一律 reject」不再成立,`opt` 不是一般物件時亦 reject.)
 8. **`floatingManifestUrl` 不轉傳**(清單信任錨為 GitHub 主幹,M5).
 9. rollup UMD 之 external/globals 含 `url`、`crypto`、`stream`、`stream/promises`、`os`(及 wsemi 所用之 `fs`、`path`、`child_process`),`toolg/gDistRollup.mjs`.
+10. **測試取得外部執行檔:集中取得、時限對齊下載預算、跨程序只下載一次**(排程第 632 項,A 類第二批,2026-11-25;規格 §6 E5、§8 T9 使用端條):`mocha --parallel` 之各 worker 為不同行程,需要真執行檔之測試(約 170 MB)首次各自下載會重複且互搶(修前實測:`WScanDep.test.mjs` 與 `api-scanScope.test.mjs` 同時啟動、空快取,syft 下載 2 次/2 行程,而 16 案全綠——全綠不證明只下載一次).
+    ① `package.json` 宣告 `wsemi` `^1.9.75` 以上(`fsEnsureBins` 跨程序鎖:同一快取只下載一次,他方等候後讀快取;進度事件 `wait`,觀察事件〔`onTrace`〕`lock-wait`、`lock-takeover`).本套件測試與 `src` 皆自 `wsemi/src/fsEnsureBins.mjs`(原始碼)取得,**不經 `dist`**(`dist` 之 UMD 內嵌其建置時之 wsemi,使用端升 wsemi 對其無效,`npm ls` 顯示 deduped 亦會誤導).
+    ② **唯一取得點** `test/tools/binsAcquire.mjs` 之 `ensureTestBins(this)`:一次取齊全部 4 個工具(不分檔各取其需),需要真執行檔之測試檔於 `before` 呼叫——`WScanDep.test.mjs` 之 `WScanDep`(其 `wsd` 於 `it` 內隱式取得,須在其前備妥)與 `captureExSbom` 兩個 describe、`api-scanScope.test.mjs` 之獨立 `before`、`unit-runOsv.test.mjs` 之巢狀 describe `with the real osv-scanner`(原只找舊版遺留之 `test/output/tools` 並於找不到時 `this.skip()`,發布包解開之目錄等乾淨環境靜默不跑該案,2026-11-25 發布包配置全套得 1 pending 而發現).任何測試不得因缺工具而 `skip`,亦不得自舊路徑 `test/output/tools` 找工具(`unit-binsAcquire` 掃描).其他測試檔與 `test/tools/` 不得靜態匯入 `src/ensureBins.mjs`(以假套件根複本＋本機假伺服器驗證取得行為者〔`api-ensureBins`、`api-wsdEntry`、`api-ensureBinsLock`〕為動態匯入複本,不在此限).取得失敗即該 hook 紅,不以 `skip` 掩蓋.
+    ③ **時限對齊下載預算**:hook 時限 `BIN_BUDGET_MS`(`binsAcquire.mjs` 匯出,無鏡像 3880000 毫秒,約 64.7 分鐘)＝取主幹清單 `stallMs` 30000 ＋ 各檔[下載次數×`totalMs` ＋ 解壓批數×(`totalMs`＋`KILL_WAIT_MS` 5000)＋ min(`totalMs`,60000)](同 wsemi `fsEnsureBinsCore.mjs` 之 `lockBudget`;`totalMs` 明給 600000＝wsemi 預設,不縮短:縮短會使慢網路下之測試比實際使用更易逾時,最大之 osv-scanner 59 MB 於 600000 毫秒約需 96 KB/s、300000 毫秒則需約 192 KB/s;有鏡像時每個來源多試鏡像,7480000);二壓縮檔(syft、grype)＋二直接檔(osv-scanner、ex-sbom):`30000＋2×(600000＋605000＋60000)＋2×(600000＋60000)`.此為每次嘗試皆耗盡上限之最壞情形(取得失敗多為連線錯誤,數秒內即 reject),網路正常時數十秒;不沿用 mocha 之 180 秒.算式與 wsemi 之對照以行為驗證:`api-ensureBinsLock` 讀持有者鎖檔 `owner.json` 之 `limitMs`(wsemi 實際用之 `lockBudget`),逐檔(壓縮檔與直接檔各一形狀、`totalMs` 取非預設值)等於 `calcBinBudgetMs` 去掉 `stallMs` 之值.清單出現算式未涵蓋之形狀(`parts`、檔案組、頂層 `bundles`)時 `calcBinBudgetMs` 拋錯,不低估.
+    ④ **真 `npm install` 保留**:`api-scanScope.test.mjs`、`WScanDep.test.mjs` 屬本套件核心功能(掃描已安裝之依賴)之整合測試,不以假 registry 取代;需連 registry(`npm_config_registry` 所指者),**網路不穩時會紅**(README〈測試之網路需求〉).
+    ⑤ **驗收以事件為準**:清空 `bin-cache/`(先確認無目錄連結)後平行跑全套,設 `WSD_TEST_BINS_TRACE=<檔>` 並以 `node test/tools/binsTrace.mjs <檔>` 判讀各工具 `download` 恰 1 次(離開碼 0);另以伺服器端請求計數(`api-ensureBinsLock`)與 `fetch` 起始計數為旁證.
 
 ### 盤點指令與站點全集
 
@@ -45,6 +51,8 @@
 | Grep `postinstall` 於 `package.json`、`scripts/` | 無 | 已套 |
 | Grep `spawn(\|spawnSync(` 於 `src/` | proc.mjs(`runTool`:syft/grype/osv 之 `spawn`,路徑來自 `tools[…].exePath`,由 scan.mjs 呼叫;`killTree`:逾時之 taskkill;2026-10-30 起 scan.mjs 不再直接 `spawnSync`)、exsbom.mjs(ex-sbom,路徑來自 `tools['ex-sbom'].exePath`)、install.mjs(npm install 之 `spawn`;2026-10-29 自 WScanDep.mjs 移入)、updatelist.mjs(npm ls)、exsbom.mjs 之系統指令(netstat、netsh、tasklist、taskkill) | 已套(執行檔路徑皆源自 `ensureBins`) |
 | `node C:/opensrcOper/tools/scan-bins.mjs --only w-scan-dep` | `OK w-scan-dep: 有清單;用 fsEnsureBins` | 已套 |
+| Grep `from\s+['"](\.\./)+src/ensureBins\.mjs['"]` 於 `test/`(含 `test/tools/`) | 僅 `test/tools/binsAcquire.mjs`(規則 10 ②) | 已套(`unit-binsAcquire` 接線案以檔案系統掃描,非手列) |
+| 清空 `bin-cache/` 後 `WSD_TEST_BINS_TRACE=<檔> npm test`,再 `node test/tools/binsTrace.mjs <檔>` | 各工具 `download` 恰 1 次、離開碼 0(規則 10 ⑤) | 已套(2026-11-25 驗收,數字見報告) |
 | `npm pack --dry-run --json` | 無外部執行檔與壓縮檔(`.exe`、`.dll`、`.node`、`.msi`、`.zip`、`.7z`、`.gz`、`.tgz`、`.NNN`);`bin/` 只有 `bin/manifest.json`;無 `CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env`;`sgud/state/state.md` 與 `test/tools/` 隨包(2026-11-02 起,npm 發布範圍原則 2〈套件測試之 npm 包檢查〉) | 已套(T1,`test/unit-binManifest.test.mjs`) |
 
 改造前(HEAD `8529d52`)站點全集與改後對照(`file:line`):
@@ -76,10 +84,14 @@
 | 套件根與 cwd 無關、不轉傳 `floatingManifestUrl` | 同上 | 子行程於他處 cwd 載入;傳入非本 repo 之網址仍取標準主幹清單 |
 | 主函數類入口 | `test/api-wsdEntry.test.mjs` | 攔截全域 `fetch`(斷言除本機迴圈位址外未被呼叫)與 `child_process.spawn/spawnSync`(斷言啟動者為 `ensureBins` 回傳之快取路徑、工作目錄為 `exsbom-work`);取得先於 `npm install`(2026-10-29 起 npm install 經 `spawn`);快取在 `fdOut/test` 內被拒;`opt.fdTools` 與非一般物件之 `opt` 被拒(第三參數 `opt` 之報告用語見 R-REPORT-TEXT-01);靜態屬性匯出 |
 | 版本推得 | `test/unit-toolVersions.test.mjs` | 以 sha256 比對基準清單與主幹清單副本取得版本標籤;不符為 `unknown` |
+| E5/T9 使用端條(規則 10 ①) | `test/api-ensureBinsLock.test.mjs` | 4 個真行程(子行程 `test/tools/ensureBinsLockChild.mjs`)同時取同一空快取,經假套件根複本之 `src/ensureBins.mjs`(載入 node_modules 之 wsemi 原始碼)與本機 HTTP 伺服器:每個資產伺服器端只被請求 1 次、各工具 `download` 事件恰 1 次、至少 N-1 個行程回報 `lock-wait`(伺服器扣住資產回應直到收到事件才放行,不以延時同步)、他方等候後命中快取、無 `lock-skip`/逾時、不留 `.lock-*`/`.work-*`;再取一次不再下載.wsemi 1.9.74(無鎖)下此案紅(syft、grype 各 4 次) |
+| 規則 10 ②③⑤ | `test/unit-binsAcquire.test.mjs` | wsemi 宣告與安裝版本 ≥ 1.9.75 且經原始碼匯入(非 dist)、載入之 `fsEnsureBinsCore` 帶鎖與預算算式(wsemi 改式即紅)、`BIN_BUDGET_MS` 推算(手算 2080000、有鏡像 3880000、未涵蓋形狀拋錯)、`ensureTestBins` 之參數與時限(替身 ensure)、事件記錄與 `binsTrace` 判讀(含命令列離開碼 0/1/2)、各測試檔之接線(逐 describe 於首案前取得;無他檔靜態匯入 `src/ensureBins.mjs`) |
 | 工具位置防呆 | `test/unit-layout.test.mjs` | `assertToolsOutside` |
 | 更新工具 | `test/unit-genBinManifest.test.mjs` | 本機假 GitHub API:標籤網址、checksums 與 API digest 雙重核對、`--only`/`--tag`、拒絕 draft/prerelease/無可核對來源 |
 
-執行方式:`npm test`(全套,含需連網之 `test/WScanDep.test.mjs`「test」案——完整掃描,首次會下載 162MB 並以新快取路徑啟動 ex-sbom,Windows 防火牆會詢問一次);離線受影響測試:`npx mocha --no-parallel "test/unit-*.test.mjs" "test/api-*.test.mjs" --timeout 180000`.
+執行方式:`npm test`(全套,含需連網之 `test/WScanDep.test.mjs`「test」案——完整掃描,首次會下載 162MB 並以新快取路徑啟動 ex-sbom,Windows 防火牆會詢問一次;另 `api-scanScope.test.mjs` 連真 registry 做 `npm install`,網路不穩時會紅,規則 10 ④);離線受影響測試:`npx mocha --no-parallel "test/unit-*.test.mjs" "test/api-*.test.mjs" --timeout 180000`.
+
+已知缺口(規則 10):①接線守門(`unit-binsAcquire` 接線案)只硬編 `WScanDep.test.mjs`、`api-scanScope.test.mjs`、`unit-runOsv.test.mjs` 三檔,並禁止測試 `skip` 與自舊路徑找工具、禁止他檔靜態匯入 `src/ensureBins.mjs`;**新增需真執行檔之測試檔須自行於 `before` 呼叫 `ensureTestBins(this)`**(經 `WScanDep`、動態匯入或自備路徑跑真工具者守門抓不到;鎖仍保證只下載一次,但其 `it` 落在 mocha 預設時限內);②雜湊不符重取主幹清單、持有者失敗後等候者自行重試之路徑,預算不涵蓋(失敗路徑,測試本就紅);③取齊 4 工具使 `api-scanScope` 多取不需要之 3 檔(規則 10 ② 之取捨);④主幹清單形狀可能與基準清單不同,預算依基準清單推得.
 
 已知限制:廠商檔之真實 sha256/size 無法離線驗證(測試只驗清單形式與流程);由 `toolg/genBinManifest.mjs` 於產生時以廠商 checksums 與 GitHub API digest 雙重核對,並於 2026-10-29 以真實網路跑 `ensureBins` 取得四個檔、解壓並校驗通過(見報告).
 
@@ -93,7 +105,7 @@
   - **曾有之限制（2026-10-30 run03 已解，見 R-EXSBOM-PORT-01）**：身分確認原依作業系統 TCP 表（自行解析 `netstat -ano`）。Windows 11 26300（KB5127936）之系統 TCP 狀態值錯誤，`netstat -ano` 整列漏列新起之監聽（本機實測新起之監聽約半數不在輸出中）、對外連線反列 LISTENING，使就緒或截圖完成時之確認誤判：漏列他服務之 127.0.0.1 監聽列而連到它，或漏列 ex-sbom 自身而判為「監聽者已非本次」。2026-10-30 起身分確認改用 wsemi `execProcessPortPidsSync(port, { useBoth: true })`（netstat 與 `Get-NetTCPConnection` 取聯集），不再自行解析 netstat。
 - **Windows 防火牆**：ex-sbom 以 `r.Run(":" + port)` 監聽全部網路介面（v0.2.0 `main.go:79`，無法設定只綁本機），防火牆依**執行檔完整路徑**對每個新路徑詢問一次並建 TCP/UDP 兩條規則（本機連接埠為「任一」，故改埠不會再詢問，實測）。選「取消」（封鎖）掃描照常完成——連線走本機迴圈位址（實測：本機 `test/output/tools` 之 ex-sbom 為封鎖規則，掃描與截圖照常）；選「允許」則掃描期間對私人與公用網路開放。
   - **2026-10-29 起執行檔路徑為 `<快取>/<sha256>/ex-sbom.exe`**（預設 `<套件根>/bin-cache/`，或 `W_BIN_CACHE`）：同一版本只在第一次詢問；ex-sbom 換版（sha256 變）即新路徑、再詢問一次。
-  - **agent 實跑掃描時，ex-sbom 只能從已有規則之路徑執行**：舊版遺留之 `test/output/tools/ex-sbom/<版>/ex-sbom.exe` 已有規則（`test/WScanDep.test.mjs` 之 `captureExSbom` 案在快取尚無 ex-sbom 時沿用之）；`ensureBins` 快取內之新路徑首次執行會跳詢問、留下規則——勿在 agent 自動化中首次啟動（2026-10-02 曾因驗收用了新路徑 `tmp/accept/out/tools`，留下兩條「允許」規則）。
+  - **agent 實跑掃描時，ex-sbom 只能從已有規則之路徑執行**：舊版遺留之 `test/output/tools/ex-sbom/<版>/ex-sbom.exe` 已有規則（2026-11-25 起 `test/WScanDep.test.mjs` 之 `captureExSbom` 案不再沿用該路徑，一律經 `ensureTestBins` 取得快取路徑 `bin-cache/<sha256>/ex-sbom.exe`，本機該路徑亦已有 Allow 規則；於發布包解開之目錄等新路徑首次跑全套會再詢問並留下規則，2026-11-25 即留下兩條 Block 規則）；`ensureBins` 快取內之新路徑首次執行會跳詢問、留下規則——勿在 agent 自動化中首次啟動（2026-10-02 曾因驗收用了新路徑 `tmp/accept/out/tools`，留下兩條「允許」規則）。
 - **ex-sbom 工作目錄（2026-10-03 修正）**：ex-sbom 把上傳之 SBOM 以原檔名寫入其工作目錄（v0.2.0 `util/file/temp_file.go:34`），處理完才刪且不檢查刪除結果（`internal/service/sbom/spdx_sbom.go:316`；實測刪除成敗不定，ex-sbom 存活時副本常被其自身占用）。現以 `fdOut/exsbom-work/<pid>-<6 碼>` 為其工作目錄，ex-sbom 結束後才刪；開始時只清名稱相符且建立者已不存在之舊子夾（`src/exsbom.mjs` `cleanStaleWork`，2026-10-30 起匯出供測試；被占用者記警告略過。確定性測試：`test/unit-exsbom.test.mjs`〈exsbom cleanStaleWork〉，占用者以 `test/tools/holdDir.mjs` 模擬——待占用者印出 cwd 並以改名被拒確認確被持有才呼叫，不以延時同步，另有「占用者啟動後 1500 毫秒才進入該目錄」案證明不依賴 spawn 回傳即持有；經真 ex-sbom 之整合案為 `test/WScanDep.test.mjs`「清除前次殘留之工作子夾…」，受本機 TCP 表異常影響）。修正前副本落在呼叫端 cwd（本 repo 根目錄之 `syft.spdx.json` 即此來源，已列 .gitignore），並會覆寫、甚至刪除呼叫端 cwd 中之同名檔。此亦使執行期資料不寫入執行檔所在之快取夾（R-BIN-ENSURE-01 規則 4）。
   - 推測（未實測）：內嵌之 osv 掃描可能依 SBOM 所在目錄讀取 `osv-scanner.toml`；修正前會吃到呼叫端 cwd 之設定，修正後不會。
 - **ex-sbom 分析失敗之偵測**：ex-sbom 分析失敗時仍回 200、畫面呈「無漏洞」（`spdx_sbom.go:253-267`、`create.go:125-127`）。本套件讀其 log（`exsbom-work/<子夾>/ex-sbom.log`），見副本寫入失敗、SBOM 解析或處理失敗、漏洞掃描失敗即 throw；LEV 查詢失敗只警告。throw 由 `captureExSbom` reject，`WScanDep` 標 `result.json` 之 `exsbom.ok=false`（R-EXSBOM-FAIL-01）。

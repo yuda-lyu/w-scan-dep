@@ -2,9 +2,11 @@ import assert from 'assert'
 import fs from 'fs'
 import path from 'path'
 import { runOsv } from '../src/scan.mjs'
+import { ensureTestBins } from './tools/binsAcquire.mjs'
 
 
 //重跑同一 fdOut 時,osv-scanner 未寫出本次結果者不得讀到上一次之 report(osv).md / osv.json
+//真實 osv-scanner 由 ensureTestBins 於 before 取得(唯一取得點,R-BIN-ENSURE-01 規則 10);原先只找舊版遺留之 test/output/tools 並於找不到時略過,乾淨環境(如發布包解開之目錄)靜默不跑該案
 describe('runOsv', function() {
     this.timeout(60000)
 
@@ -15,17 +17,6 @@ describe('runOsv', function() {
     let staleMd = '| https://osv.dev/GHSA-stale | 5.9 | npm | nodemailer | 9.1.1 | 10.0.0 |'
     let staleJson = JSON.stringify({ results: [{ packages: [{ package: { name: 'nodemailer', version: '9.1.1', ecosystem: 'npm' }, vulnerabilities: [{ id: 'GHSA-stale' }] }] }] })
     let log = () => {}
-
-    //已下載之 osv-scanner(由完整掃描產生於 test/output/tools)
-    let findOsv = () => {
-        let fd = path.resolve('./test/output/tools/osv-scanner')
-        if (!fs.existsSync(fd)) return null
-        for (let v of fs.readdirSync(fd)) {
-            let p = path.join(fd, v, 'osv-scanner.exe')
-            if (fs.existsSync(p)) return p
-        }
-        return null
-    }
 
     beforeEach(function() {
         fs.rmSync(root, { recursive: true, force: true })
@@ -46,12 +37,18 @@ describe('runOsv', function() {
         assert.strict.ok(!fs.existsSync(jsonPath))
     })
 
-    it('SBOM 無套件(exit 128,不寫輸出檔)時視為無漏洞,不讀到上一次之結果', async function() {
-        let osvExe = findOsv()
-        if (!osvExe) this.skip() //尚未完整掃描過、無已下載之 osv-scanner
-        let r = await runOsv(osvExe, cdxPath, root, log)
-        assert.strict.strictEqual(r.mdText, '')
-        assert.strict.deepEqual(r.packages, [])
+    describe('with the real osv-scanner', function() {
+        let osvExe = null
+
+        before(async function() {
+            osvExe = (await ensureTestBins(this))['osv-scanner.exe']
+        })
+
+        it('SBOM 無套件(exit 128,不寫輸出檔)時視為無漏洞,不讀到上一次之結果', async function() {
+            let r = await runOsv(osvExe, cdxPath, root, log)
+            assert.strict.strictEqual(r.mdText, '')
+            assert.strict.deepEqual(r.packages, [])
+        })
     })
 
 })

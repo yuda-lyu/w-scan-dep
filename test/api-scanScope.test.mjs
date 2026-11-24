@@ -3,13 +3,13 @@ import fs from 'fs'
 import path from 'path'
 import { npmInstall } from '../src/install.mjs'
 import { runSyft } from '../src/scan.mjs'
-import ensureBins from '../src/ensureBins.mjs'
+import { ensureTestBins } from './tools/binsAcquire.mjs'
 
 
 //建議w-scan-dep調整.md(Gitea #27, 主控裁定 2): 掃描範圍只算 dependencies 所提供者(程式碼與其所附之執行檔), devDependencies 之開發與建置工具不在範圍。
 //syft 之 npm 編目器預設不收 dev 套件, 但 PE／Go binary 編目器掃描安裝所得之檔案, 不分正式或開發用, 故全量安裝時開發用套件所附之執行檔仍被編入 SBOM;
 //隔離安裝改為 npm install --omit=dev 後, 開發用套件所附之執行檔不落地, 各編目器一致。
-//連網(npm registry, 取 npm_config_registry 所指者)並用真實 syft(經 ensureBins 取得, 與 WScanDep.test.mjs 同); 夾具為真實小套件:
+//連網(npm registry, 取 npm_config_registry 所指者; 真 npm install, 網路不穩時會紅)並用真實 syft(經 ensureTestBins 取得, 與 WScanDep.test.mjs 同一取得點, 跨程序只下載一次); 夾具為真實小套件:
 //  dependencies:    boxen@4.2.0(其相依 term-size@2.2.1 附 vendor/windows/term-size.exe, 正式套件所附之執行檔)
 //  devDependencies: clipboardy@2.3.0(附 fallbacks/windows/clipboard_i686.exe、clipboard_x86_64.exe, 開發用套件所附之執行檔, 只在開發樹)
 //                   term-size@2.2.1(同時為 boxen 之相依: 開發用之宣告不使正式樹內之它被排除)
@@ -20,6 +20,12 @@ describe('scan scope (real syft over the dependencies-only install)', function()
     let prj = path.join(root, 'prj')
     let scan = path.join(root, 'scan')
     let comps = null
+    let bins = null
+
+    //取得工具獨立成一個 before: 其時限對齊下載預算(binsAcquire.mjs 之 BIN_BUDGET_MS), 不與下方之 npm install、掃描共用
+    before(async function() {
+        bins = await ensureTestBins(this) //一次取齊全部工具(與 WScanDep.test.mjs 共用同一取得點), 本案只用 syft
+    })
 
     before(async function() {
         fs.rmSync(root, { recursive: true, force: true })
@@ -31,7 +37,6 @@ describe('scan scope (real syft over the dependencies-only install)', function()
             dependencies: { boxen: '4.2.0' },
             devDependencies: { 'clipboardy': '2.3.0', 'term-size': '2.2.1' },
         }))
-        let bins = await ensureBins({ names: 'syft.exe' })
         await npmInstall(prj)
         let { cdx } = await runSyft(bins['syft.exe'], prj, scan, () => {})
         comps = JSON.parse(fs.readFileSync(cdx, 'utf8')).components
