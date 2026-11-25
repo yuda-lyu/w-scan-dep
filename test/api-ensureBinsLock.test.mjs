@@ -3,8 +3,8 @@ import path from 'path'
 import http from 'http'
 import assert from 'assert'
 import { spawn } from 'child_process'
+import fsEnsureBinsBudget from 'wsemi/src/fsEnsureBinsBudget.mjs'
 import { makeRelease, makeFakePkg } from './tools/fakeBins.mjs'
-import { calcBinBudgetMs, BIN_STALL_MS } from './tools/binsAcquire.mjs'
 
 
 //規格: 外部執行檔之存放下載校驗與離線(制式規格) §6 E5、§8 T9(跨程序只下載一次); 規則帳本 R-BIN-ENSURE-01 規則 10
@@ -17,7 +17,7 @@ describe(`ensureBins across processes (only one download per tool)`, function() 
 
     let N = 4 //同時取得之行程數
     let GATE_CAP_MS = 60000 //放行上限(僅在無鎖而等不到事件時才用到, 防止測試懸置; 有鎖時於收到事件即放行, 不影響耗時, 取大以免高負載下行程晚到而誤紅)
-    let TOTAL_MS = 450000 //傳給子行程之 totalMs(非預設值: 鎖檔之持鎖上限 limitMs 須隨之改變, 對照 binsAcquire.mjs 之預算算式)
+    let TOTAL_MS = 450000 //傳給子行程之 totalMs(非預設值: 鎖檔之持鎖上限 limitMs 須隨之改變, 對照 wsemi fsEnsureBinsBudget 之預算)
     let fdt = path.resolve('./test/_tmp/ensureBinsLock')
     let fdWork = path.join(fdt, 'work')
     let fdPkg = path.join(fdt, 'pkg')
@@ -184,10 +184,11 @@ describe(`ensureBins across processes (only one download per tool)`, function() 
         //伺服器端: 每個資產只被請求1次(鎖不存在時為N次)
         assert.strict.deepStrictEqual(assetPaths().map((p) => `${p}:${assetHits[p] || 0}`), assetPaths().map((p) => `${p}:1`))
 
-        //持鎖上限即 binsAcquire.mjs 之預算算式(去掉取主幹清單之 stallMs): 持有者鎖檔 owner.json 之 limitMs 為 wsemi 實際用之 lockBudget(壓縮檔與直接檔各一形狀、totalMs 非預設值)
-        //(各檔之持鎖者之鎖於其資產請求到達時必在, 故值集合 = 各檔預期值之集合: 壓縮檔 2×totalMs+5000+60000、直接檔 totalMs+60000; 不逐檔對應, 見 limits 之說明)
-        let wantLimits = [...new Set(A.manifest.files.map((f) => calcBinBudgetMs({ files: [f] }, { totalMs: TOTAL_MS }) - BIN_STALL_MS))].sort((a, b) => a - b)
-        assert.strict.deepStrictEqual(wantLimits, [TOTAL_MS + 60000, 2 * TOTAL_MS + 5000 + 60000]) //前提: 兩種形狀之值相異(才有鑑別力)
+        //持鎖上限即 wsemi fsEnsureBinsBudget 之預算(單一來源, 規格 E5-3): 持有者鎖檔 owner.json 之 limitMs 為 wsemi 實際用之 lockBudget; 離線(不取主幹清單)時單檔之預算即該檔之鎖上限(壓縮檔與直接檔各一形狀、totalMs 非預設值)
+        //(各檔之持鎖者之鎖於其資產請求到達時必在, 故值集合 = 各檔預期值之集合; 不逐檔對應, 見 limits 之說明)
+        let wantLimits = [...new Set(A.manifest.files.map((f) => fsEnsureBinsBudget({ ...A.manifest, files: [f] }, { pkgRoot: fdPkg, totalMs: TOTAL_MS, mirror: '', offline: true })))].sort((a, b) => a - b)
+        assert.strict.equal(wantLimits.length, 2) //前提: 壓縮檔與直接檔兩種形狀之值相異(才有鑑別力)
+        assert.strict.ok(wantLimits.every((v) => v > TOTAL_MS), '預算至少涵蓋一次下載之 totalMs(預算函式與鎖若同時算錯成 0 或過小,僅互相對照抓不到)')
         assert.strict.deepStrictEqual([...limits].sort((a, b) => a - b), wantLimits, '鎖檔 limitMs 之集合')
 
         //同步是由事件放行而非逾時放行: 至少(N-1)個行程曾等候syft.exe之鎖

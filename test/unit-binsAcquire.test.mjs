@@ -3,13 +3,18 @@ import path from 'path'
 import assert from 'assert'
 import { spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
-import { BIN_TOTAL_MS, BIN_BUDGET_MS, calcBinBudgetMs, readBinManifest, ensureTestBins, makeTraceSink } from './tools/binsAcquire.mjs'
+import fsEnsureBinsBudget from 'wsemi/src/fsEnsureBinsBudget.mjs'
+import * as acq from './tools/binsAcquire.mjs'
 import { parseTrace, judgeTrace } from './tools/binsTrace.mjs'
 import { withEnv } from './tools/fakeBins.mjs'
+import { ROOT as PKG_ROOT } from '../src/config.mjs'
+
+//以命名空間取用: 取得工具缺少某匯出時, 只有用到它之案例個別轉紅(而非整檔無法載入)
+const { BIN_MANIFEST, BIN_TOTAL_MS, BIN_PARALLEL_FACTOR, BIN_BUDGET_MS, BIN_HOOK_MS, binBudgetMs, binHookMs, readBinManifest, ensureTestBins, makeTraceSink } = acq
 
 
-//規則帳本 R-BIN-ENSURE-01 規則 10: 測試取得外部執行檔(合計約170 MB)之方式——集中取得、時限對齊下載預算、跨程序只下載一次(wsemi 1.9.75 起之 fsEnsureBins 鎖)
-//本檔不連網: 驗證取得工具之時限推算、參數、事件記錄與判讀、各測試檔之接線, 以及實際執行之取得函式為帶鎖之 wsemi(跨程序只下載一次之行為見 api-ensureBinsLock.test.mjs)
+//規則帳本 R-BIN-ENSURE-01 規則 10: 測試取得外部執行檔(合計約170 MB)之方式——集中取得、時限取自 wsemi 之 fsEnsureBinsBudget(並行取兩倍)、跨程序只下載一次(wsemi 1.9.75 起之 fsEnsureBins 鎖)
+//本檔不連網: 驗證取得工具之時限取得法、參數、事件記錄與判讀、各測試檔之接線, 以及實際執行之取得函式為帶鎖之 wsemi(跨程序只下載一次之行為, 與預算函式和鎖之持有上限之對照, 見 api-ensureBinsLock.test.mjs)
 describe('test acquisition of the external executables (binsAcquire)', function() {
     this.timeout(60000)
 
@@ -33,17 +38,22 @@ describe('test acquisition of the external executables (binsAcquire)', function(
         fs.rmSync(fdt, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     })
 
-    describe('the function that really runs is the wsemi with the cross-process lock', function() {
+    describe('the function that really runs is the wsemi with the cross-process lock and the budget function', function() {
 
-        it(`should declare wsemi ^1.9.75 or later in package.json (the first version with the lock)`, function() {
+        it(`should declare wsemi ^1.9.76 or later in package.json (the first version with fsEnsureBinsBudget; the lock is from 1.9.75)`, function() {
             let range = JSON.parse(rd('package.json')).dependencies.wsemi
             assert.strict.match(range, /^\^\d+\.\d+\.\d+$/, range)
-            assert.strict.ok(ge(ver(range), [1, 9, 75]), range)
+            assert.strict.ok(ge(ver(range), [1, 9, 76]), range)
         })
 
-        it(`should install wsemi 1.9.75 or later as the single copy that src/ensureBins.mjs loads from source, not through a dist`, function() {
+        it(`should install wsemi 1.9.76 or later as the single copy that src/ensureBins.mjs and binsAcquire.mjs load from source, not through a dist`, function() {
             let installed = JSON.parse(rd('node_modules', 'wsemi', 'package.json')).version
-            assert.strict.ok(ge(ver(installed), [1, 9, 75]), installed)
+            assert.strict.ok(ge(ver(installed), [1, 9, 76]), installed)
+            //取得時限之預算函式亦自 node_modules 內之單一 wsemi 原始碼匯入(binsAcquire.mjs)
+            let bsrc = rd('test', 'tools', 'binsAcquire.mjs')
+            assert.strict.match(bsrc, /^import fsEnsureBinsBudget from 'wsemi\/src\/fsEnsureBinsBudget\.mjs'$/m)
+            let urlB = import.meta.resolve('wsemi/src/fsEnsureBinsBudget.mjs')
+            assert.strict.equal(fs.realpathSync(fileURLToPath(urlB)).toLowerCase(), fs.realpathSync(path.join(ROOT, 'node_modules', 'wsemi', 'src', 'fsEnsureBinsBudget.mjs')).toLowerCase())
             //src/ensureBins.mjs 匯入 wsemi/src/fsEnsureBins.mjs(原始碼, 非 dist 之 UMD: dist 內嵌其建置時之 wsemi, 升 wsemi 對其無效)
             let src = rd('src', 'ensureBins.mjs')
             assert.strict.match(src, /^import fsEnsureBins from 'wsemi\/src\/fsEnsureBins\.mjs'$/m)
@@ -56,7 +66,7 @@ describe('test acquisition of the external executables (binsAcquire)', function(
             assert.strict.equal(fp.toLowerCase(), want.toLowerCase())
         })
 
-        it(`should load a fsEnsureBinsCore that has the lock (events lock-wait, lock-takeover, error E_LOCK_TIMEOUT); the budget formula it uses is checked by behaviour in api-ensureBinsLock.test.mjs (limitMs of the lock file)`, function() {
+        it(`should load a fsEnsureBinsCore that has the lock (events lock-wait, lock-takeover, error E_LOCK_TIMEOUT); that the lock limit is the value of fsEnsureBinsBudget is checked by behaviour in api-ensureBinsLock.test.mjs (limitMs of the lock file)`, function() {
             let core = rd('node_modules', 'wsemi', 'src', 'fsEnsureBinsCore.mjs')
             for (let s of ['lock-wait', 'lock-takeover', 'E_LOCK_TIMEOUT']) {
                 assert.strict.ok(core.includes(s), s)
@@ -64,45 +74,66 @@ describe('test acquisition of the external executables (binsAcquire)', function(
         })
     })
 
-    describe('the time limit is the download budget, not the 180 seconds of mocha', function() {
+    describe('the time limit comes from wsemi fsEnsureBinsBudget (no own formula) and covers parallel acquisition, not the 180 seconds of mocha', function() {
 
-        it(`should derive BIN_BUDGET_MS from the manifest: 2 zip tools and 2 direct tools at totalMs ${BIN_TOTAL_MS} (the wsemi default, not shortened) = 3880000 ms`, function() {
-            let m = readBinManifest()
-            assert.strict.deepStrictEqual(m.files.map((f) => `${f.name}:${f.extract ? 'zip' : 'direct'}`), ['syft.exe:zip', 'grype.exe:zip', 'osv-scanner.exe:direct', 'ex-sbom.exe:direct'])
+        //規格 外部執行檔之存放下載校驗與離線(制式規格) §6 E5-3: 使用端測試之首次取得時限以 fsEnsureBinsBudget 求得、不自寫算式; 並行時最壞約為兩倍, before 時限取兩倍
+        it(`should take BIN_BUDGET_MS from fsEnsureBinsBudget over this package's bin/manifest.json with the explicit totalMs 600000 (the wsemi default, not shortened), and BIN_HOOK_MS as 2 times of it (parallel acquisition)`, function() {
+            let at = (o) => fsEnsureBinsBudget('bin/manifest.json', { pkgRoot: PKG_ROOT, ...o })
+            let want = at({ totalMs: 600000, mirror: '', offline: false })
+            assert.strict.equal(BIN_MANIFEST, 'bin/manifest.json')
             assert.strict.equal(BIN_TOTAL_MS, 600000)
-            //手算: 取主幹清單 30000 + 2×壓縮檔(下載1次 600000 + 解壓1批 600000+5000 + 寬裕 60000) + 2×直接檔(下載1次 600000 + 寬裕 60000)
-            assert.strict.equal(30000 + 2 * (600000 + 600000 + 5000 + 60000) + 2 * (600000 + 60000), 3880000)
-            assert.strict.equal(BIN_BUDGET_MS, 3880000)
-            assert.strict.equal(calcBinBudgetMs(m), BIN_BUDGET_MS)
-            assert.strict.ok(BIN_BUDGET_MS > 180000 * 10, 'mocha 之 180 秒遠低於下載預算')
+            assert.strict.equal(BIN_PARALLEL_FACTOR, 2)
+            assert.strict.equal(BIN_BUDGET_MS, want)
+            assert.strict.equal(BIN_HOOK_MS, 2 * want)
+            assert.strict.equal(binBudgetMs({ mirror: '', offline: false }), want)
+            assert.strict.equal(binHookMs({ mirror: '', offline: false }), 2 * want)
+            //totalMs 即 wsemi 預設(不縮短): 不給 totalMs 時預算相同; 縮短則預算變小(前提: 此式對 totalMs 敏感, 上列相等才有鑑別力)
+            assert.strict.equal(at({ mirror: '', offline: false }), want)
+            assert.strict.ok(at({ totalMs: 300000, mirror: '', offline: false }) < want)
+            assert.strict.ok(BIN_HOOK_MS > 180000 * 10, 'mocha 之 180 秒遠低於下載預算')
         })
 
-        it(`should count the mirror attempts when a mirror is set: each source tries the mirror first`, function() {
-            let m = readBinManifest()
-            //壓縮檔: 下載次數 1(鏡像最終檔)+2(鏡像壓縮檔、廠商網址) = 3; 直接檔: 2
-            let want = 30000 + 2 * (3 * 600000 + 600000 + 5000 + 60000) + 2 * (2 * 600000 + 60000)
-            assert.strict.equal(want, 7480000)
-            assert.strict.equal(calcBinBudgetMs(m, { mirror: true }), want)
-            assert.strict.ok(calcBinBudgetMs(m, { mirror: true }) > calcBinBudgetMs(m))
+        it(`should leave the mirror and offline choice to the environment variables W_BIN_MIRROR and W_BIN_OFFLINE as fsEnsureBins does (a mirror tries each source twice, offline skips the trunk manifest fetch)`, async function() {
+            let at = (o) => fsEnsureBinsBudget('bin/manifest.json', { pkgRoot: PKG_ROOT, totalMs: 600000, ...o })
+            let online = at({ mirror: '', offline: false })
+            let withMirror = at({ mirror: 'C:\\somewhere', offline: false })
+            let offline = at({ mirror: '', offline: true })
+            assert.strict.ok(withMirror > online && offline < online, '前提: 三值相異才有鑑別力')
+            let env = (mirror, off) => ({ W_BIN_MIRROR: mirror, W_BIN_OFFLINE: off })
+            assert.strict.equal(await withEnv(env(undefined, undefined), () => binBudgetMs()), online)
+            assert.strict.equal(await withEnv(env('C:\\somewhere', undefined), () => binBudgetMs()), withMirror)
+            assert.strict.equal(await withEnv(env(undefined, '1'), () => binBudgetMs()), offline)
+            assert.strict.equal(await withEnv(env('C:\\somewhere', undefined), () => binHookMs()), 2 * withMirror)
         })
 
-        it(`should follow totalMs and the entry shapes (one direct file, one zip member)`, function() {
-            let d = { name: 'a.exe', url: 'https://x/a.exe', sha256: '0'.repeat(64), size: 1 }
-            let z = { ...d, extract: { type: 'zip', member: 'a.exe', sha256: '1'.repeat(64), size: 2 } }
-            assert.strict.equal(calcBinBudgetMs({ files: [d] }), 30000 + 600000 + 60000)
-            assert.strict.equal(calcBinBudgetMs({ files: [z] }), 30000 + 600000 + 600000 + 5000 + 60000)
-            assert.strict.equal(calcBinBudgetMs({ files: [d] }, { totalMs: 1000 }), 30000 + 1000 + 1000) //寬裕為 min(totalMs, 60000)
-            assert.strict.equal(calcBinBudgetMs({ files: [d, z] }), calcBinBudgetMs({ files: [d] }) + calcBinBudgetMs({ files: [z] }) - 30000) //各檔逐一取得, 預算相加
+        it(`should let an error of the budget function through, not guess a number (the budget function validates the manifest and options itself)`, function() {
+            let boom = Object.assign(new Error('boom'), { code: 'E_MANIFEST' })
+            let thrower = () => {
+                throw boom
+            }
+            assert.strict.throws(() => binBudgetMs({}, thrower), (e) => e === boom)
+            assert.strict.throws(() => binHookMs({}, thrower), (e) => e === boom)
         })
 
-        it(`should refuse (not underestimate) manifest shapes the formula does not cover`, function() {
-            let d = { name: 'a.exe', url: 'https://x/a.exe', sha256: '0'.repeat(64), size: 1 }
-            assert.strict.throws(() => calcBinBudgetMs({ files: [d], bundles: [{ id: 'b' }] }), /unsupported manifest key \[bundles\]/)
-            assert.strict.throws(() => calcBinBudgetMs({ files: [{ ...d, parts: [{ url: 'https://x/a.001' }] }] }), /unsupported manifest entry key/)
-            assert.strict.throws(() => calcBinBudgetMs({ files: [{ ...d, extract: { type: 'zip', member: 'a', sha256: 'x', size: 1, members: ['a', 'b'] } }] }), /unsupported manifest extract key/)
-            assert.strict.throws(() => calcBinBudgetMs({ files: [] }), /non-empty array/)
-            assert.strict.throws(() => calcBinBudgetMs(null), /non-empty array/)
-            assert.strict.throws(() => calcBinBudgetMs({}), /non-empty array/)
+        it(`should keep no own copy of the budget formula on the test side (the only source is fsEnsureBinsBudget imported from the wsemi source), and use the same manifest as src/ensureBins.mjs`, function() {
+            //自寫算式之特徵: 持鎖/下載預算之組成項、舊函式名與常數(註解行不算)
+            let own = /KILL_WAIT|SLACK_MS|STALL_MS|Math\.min\(\s*\w*[tT]otalMs|Math\.min\([^)]*,\s*60000\s*\)|calcBinBudgetMs|lockBudget\(|unitBudget\(/
+            let codeOf = (src) => src.split(/\r?\n/).filter((v) => !/^\s*\/\//.test(v)).join('\n')
+            let hits = []
+            let self = 'unit-binsAcquire.test.mjs'
+            for (let f of fs.readdirSync(path.join(ROOT, 'test')).filter((v) => /\.test\.mjs$/.test(v) && v !== self)) {
+                if (own.test(codeOf(rd('test', f)))) hits.push(`test/${f}`)
+            }
+            for (let f of fs.readdirSync(path.join(ROOT, 'test', 'tools')).filter((v) => /\.mjs$/.test(v))) {
+                if (own.test(codeOf(rd('test', 'tools', f)))) hits.push(`test/tools/${f}`)
+            }
+            assert.strict.deepStrictEqual(hits, [])
+            let bsrc = rd('test', 'tools', 'binsAcquire.mjs')
+            assert.strict.match(bsrc, /^import fsEnsureBinsBudget from 'wsemi\/src\/fsEnsureBinsBudget\.mjs'$/m)
+            assert.strict.match(codeOf(bsrc), /budget\(BIN_MANIFEST,/)
+            //清單: 預算與取得(src/ensureBins.mjs 交給 fsEnsureBins 者)為同一份
+            assert.strict.ok(rd('src', 'ensureBins.mjs').includes(`fsEnsureBins('${BIN_MANIFEST}'`), 'src/ensureBins.mjs 取得之清單須即 BIN_MANIFEST')
+            assert.strict.deepStrictEqual(readBinManifest().files.map((f) => f.name), ['syft.exe', 'grype.exe', 'osv-scanner.exe', 'ex-sbom.exe'])
         })
     })
 
@@ -122,31 +153,68 @@ describe('test acquisition of the external executables (binsAcquire)', function(
             let ts = []
             return { timeout: (n) => ts.push(n), ts }
         }
+        //替身 budget(取代 fsEnsureBinsBudget): 記錄收到之 [清單, 選項], 回傳固定值(或拋錯)
+        let mkBudget = (ret) => {
+            let calls = []
+            let budget = (manifest, o) => {
+                calls.push([manifest, o])
+                if (ret instanceof Error) throw ret
+                return ret
+            }
+            return { budget, calls }
+        }
+        let clean = { WSD_TEST_BINS_TRACE: undefined, W_BIN_MIRROR: undefined, W_BIN_OFFLINE: undefined }
 
-        it(`should set the hook time limit to the budget, pass totalMs only, and return the paths of the ensure function`, async function() {
+        it(`should set the hook time limit to 2 times of what the budget function returns, ask it with the same manifest, package root and totalMs as the acquisition, pass totalMs only to ensure, and return the paths`, async function() {
             let paths = { 'syft.exe': 'C:\\x\\syft.exe' }
-            let { ensure, calls } = mkStub(paths)
+            let { ensure: ensure0, calls } = mkStub(paths)
+            let b = mkBudget(123456) //固定值: 時限須由它推得(非自行另算)
             let ctx = mkCtx()
-            let r = await withEnv({ WSD_TEST_BINS_TRACE: undefined, W_BIN_MIRROR: undefined }, () => ensureTestBins(ctx, { ensure }))
-            assert.strict.deepStrictEqual(ctx.ts, [BIN_BUDGET_MS])
+            let setBeforeEnsure = []
+            let ensure = async (o) => {
+                setBeforeEnsure.push(ctx.ts.length) //開始取得時, hook 時限已設定幾次
+                return ensure0(o)
+            }
+            let r = await withEnv(clean, () => ensureTestBins(ctx, { ensure, budget: b.budget }))
+            assert.strict.deepStrictEqual(ctx.ts, [2 * 123456]) //並行取兩倍
+            assert.strict.deepStrictEqual(setBeforeEnsure, [1]) //時限須於開始取得之前設定(取得進行中才設則無效)
             assert.strict.equal(r, paths)
             //只傳 totalMs: 不覆寫 names(一次取齊)、cacheDir、mirror、offline(環境變數 W_BIN_* 照常生效)
             assert.strict.deepStrictEqual(calls, [{ totalMs: BIN_TOTAL_MS }])
+            //預算函式之引數: 清單為 bin/manifest.json、套件根即 src/ensureBins.mjs 所用者(config.mjs 之 ROOT)、totalMs 與取得者同值; 不另給 mirror、offline(由環境變數決定, 同取得)
+            assert.strict.equal(b.calls.length, 1)
+            assert.strict.equal(b.calls[0][0], 'bin/manifest.json')
+            assert.strict.deepStrictEqual(Object.keys(b.calls[0][1]).sort(), ['pkgRoot', 'totalMs'])
+            assert.strict.equal(path.resolve(b.calls[0][1].pkgRoot).toLowerCase(), path.resolve(PKG_ROOT).toLowerCase())
+            assert.strict.equal(b.calls[0][1].totalMs, calls[0].totalMs)
         })
 
-        it(`should use the mirror budget when W_BIN_MIRROR is set`, async function() {
+        it(`should use the real fsEnsureBinsBudget by default: the hook limit is BIN_HOOK_MS, and with a mirror (W_BIN_MIRROR) 2 times of the budget with the mirror`, async function() {
             let { ensure } = mkStub({})
-            let ctx = mkCtx()
-            await withEnv({ WSD_TEST_BINS_TRACE: undefined, W_BIN_MIRROR: 'C:\\somewhere' }, () => ensureTestBins(ctx, { ensure }))
-            assert.strict.deepStrictEqual(ctx.ts, [calcBinBudgetMs(readBinManifest(), { mirror: true })])
+            let c1 = mkCtx()
+            await withEnv(clean, () => ensureTestBins(c1, { ensure }))
+            assert.strict.deepStrictEqual(c1.ts, [BIN_HOOK_MS])
+            let c2 = mkCtx()
+            await withEnv({ ...clean, W_BIN_MIRROR: 'C:\\somewhere' }, () => ensureTestBins(c2, { ensure }))
+            let want = fsEnsureBinsBudget('bin/manifest.json', { pkgRoot: PKG_ROOT, totalMs: 600000, mirror: 'C:\\somewhere', offline: false })
+            assert.strict.deepStrictEqual(c2.ts, [2 * want])
+            assert.strict.ok(c2.ts[0] > BIN_HOOK_MS, '有鏡像時每個來源多試鏡像, 預算較大')
         })
 
-        it(`should work without a mocha context, and let the ensure error through`, async function() {
+        it(`should work without a mocha context (the budget is still asked, so an invalid manifest fails before any download), and let the ensure error and the budget error through`, async function() {
             let { ensure } = mkStub({ ok: 1 })
-            assert.strict.deepStrictEqual(await withEnv({ WSD_TEST_BINS_TRACE: undefined }, () => ensureTestBins(null, { ensure })), { ok: 1 })
+            let b = mkBudget(1000)
+            assert.strict.deepStrictEqual(await withEnv(clean, () => ensureTestBins(null, { ensure, budget: b.budget })), { ok: 1 })
+            assert.strict.equal(b.calls.length, 1)
             let err = Object.assign(new Error('boom'), { code: 'E_X' })
             let s2 = mkStub(err)
-            await assert.rejects(withEnv({ WSD_TEST_BINS_TRACE: undefined }, () => ensureTestBins(mkCtx(), { ensure: s2.ensure })), (e) => e === err)
+            await assert.rejects(withEnv(clean, () => ensureTestBins(mkCtx(), { ensure: s2.ensure })), (e) => e === err)
+            //預算函式拋錯(清單或選項無效): 不開始取得, 不改時限
+            let bErr = Object.assign(new Error('bad manifest'), { code: 'E_MANIFEST' })
+            let s3 = mkStub({})
+            let c3 = mkCtx()
+            await assert.rejects(withEnv(clean, () => ensureTestBins(c3, { ensure: s3.ensure, budget: mkBudget(bErr).budget })), (e) => e === bErr)
+            assert.strict.deepStrictEqual([s3.calls.length, c3.ts.length], [0, 0])
         })
 
         it(`should pass onTrace only when WSD_TEST_BINS_TRACE is set, and write one JSON line per event with the pid`, async function() {

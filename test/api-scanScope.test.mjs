@@ -22,7 +22,7 @@ describe('scan scope (real syft over the dependencies-only install)', function()
     let comps = null
     let bins = null
 
-    //取得工具獨立成一個 before: 其時限對齊下載預算(binsAcquire.mjs 之 BIN_BUDGET_MS), 不與下方之 npm install、掃描共用
+    //取得工具獨立成一個 before: 其時限取自 wsemi 之 fsEnsureBinsBudget 並行取兩倍(binsAcquire.mjs 之 BIN_HOOK_MS), 不與下方之 npm install、掃描共用
     before(async function() {
         bins = await ensureTestBins(this) //一次取齊全部工具(與 WScanDep.test.mjs 共用同一取得點), 本案只用 syft
     })

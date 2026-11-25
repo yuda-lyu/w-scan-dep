@@ -20,7 +20,7 @@
 
 ## R-BIN-ENSURE-01 外部執行檔之存放、下載、校驗與離線
 
-**規格正本**:`C:\opensrcOper\dspec\外部執行檔之存放下載校驗與離線.md`(主控維護,條號 S/M/D/O/E/T 皆指該檔;本節只摘要與記本套件之落實,不重述).共用實作:wsemi `fsEnsureBins`(1.9.27+).
+**規格正本**:`dspec/外部執行檔之存放下載校驗與離線.md`(主控維護,條號 S/M/D/O/E/T 皆指該檔;本節只摘要與記本套件之落實,不重述).共用實作:wsemi `fsEnsureBins`(1.9.27+).
 
 本套件為 **C 類、主幹模式**(`mode: "floating"`,登記於主控帳本 G10):掃描工具須保持新版(使用者 2026-10-28 選),故清單放本 repo 主幹 `bin/manifest.json`,執行時取最新清單,更新工具版本只須推 GitHub,不須發布套件;npm 包內帶同一份作為取不到主幹清單時之基準清單.
 
@@ -28,7 +28,7 @@
 
 1. **套件端只做三件事**(E2):①提供清單 `bin/manifest.json`(由 `toolg/genBinManifest.mjs` 產生,不手寫);②經 `src/ensureBins.mjs` 取得路徑後啟動;③主函數以靜態屬性 `WScanDep.ensureBins` 匯出(不加具名匯出).不得另寫下載、快取、鏡像、校驗、解壓;不得有 `postinstall`(D1).
 2. **清單項**:廠商發布之版本標籤資產網址(`/releases/download/<tag>/…`,不得 `releases/latest`,M2),壓縮檔與解出之執行檔各記 sha256 與大小,`note` 寫明核對依據(廠商 checksums,或「首次下載自算」與日期,M3);repo 內不放任何廠商檔(S3),`bin/` 只有 `manifest.json`.
-3. **不入 npm 包**:`.npmignore` 首段完整抄錄 `.gitignore`(含 `/bin-cache/`),其後只有 `/bin/*`、`!/bin/manifest.json`、`/test/_tmp/`(皆註明屬 `C:\opensrcOper\dspec\自有套件之npm發布範圍.md` 原則 2 第 1 條;S1、S5);`sgud/`、`docs/`、`test/`、`toolg/` 等 git 版控內容依原則 1 隨包,不得排除(原則 4).本套件 git 版控之 `test/` 僅約 280KB、無 ≥10MB 非程式碼資料,故無第 2 條之排除項.
+3. **不入 npm 包**:`.npmignore` 首段完整抄錄 `.gitignore`(含 `/bin-cache/`),其後只有 `/bin/*`、`!/bin/manifest.json`、`/test/_tmp/`(皆註明屬 `dspec/自有套件之npm發布範圍.md` 原則 2 第 1 條;S1、S5);`sgud/`、`docs/`、`test/`、`toolg/` 等 git 版控內容依原則 1 隨包,不得排除(原則 4).本套件 git 版控之 `test/` 僅約 280KB、無 ≥10MB 非程式碼資料,故無第 2 條之排除項.
 4. **所啟動之執行檔一律為 `ensureBins` 回傳之路徑**(`<快取>/<sha256>/<檔名>`);執行期之資料交換檔不寫執行檔所在夾(ex-sbom 之工作目錄為 `fdOut/exsbom-work/<pid>-<6 碼>`,`src/exsbom.mjs`;scan 產物在 `fdOut/scan`).
 5. **工具取得先於 `npm install`**:取不到(離線無快取、校驗不符)即中止,不待安裝數分鐘後才失敗(`src/WScanDep.mjs` 之 `await ensureBins(…)`;其前只有 `W_NPM_INSTALL_TIMEOUT` 與三個掃描工具時限環境變數之格式驗證,見 R-NPM-TIMEOUT-01、R-SCAN-TIMEOUT-01).
 6. **快取位置不可在 `fdOut` 之 `test`/`pics`/`exsbom-work` 內**(`assertToolsOutside`,`src/layout.mjs:23`):`test` 為 syft 掃描目標,工具放其內會被編入 SBOM;`pics`、`exsbom-work` 每次清除.
@@ -36,9 +36,9 @@
 8. **`floatingManifestUrl` 不轉傳**(清單信任錨為 GitHub 主幹,M5).
 9. rollup UMD 之 external/globals 含 `url`、`crypto`、`stream`、`stream/promises`、`os`(及 wsemi 所用之 `fs`、`path`、`child_process`),`toolg/gDistRollup.mjs`.
 10. **測試取得外部執行檔:集中取得、時限對齊下載預算、跨程序只下載一次**(排程第 632 項,A 類第二批,2026-11-25;規格 §6 E5、§8 T9 使用端條):`mocha --parallel` 之各 worker 為不同行程,需要真執行檔之測試(約 170 MB)首次各自下載會重複且互搶(修前實測:`WScanDep.test.mjs` 與 `api-scanScope.test.mjs` 同時啟動、空快取,syft 下載 2 次/2 行程,而 16 案全綠——全綠不證明只下載一次).
-    ① `package.json` 宣告 `wsemi` `^1.9.75` 以上(`fsEnsureBins` 跨程序鎖:同一快取只下載一次,他方等候後讀快取;進度事件 `wait`,觀察事件〔`onTrace`〕`lock-wait`、`lock-takeover`).本套件測試與 `src` 皆自 `wsemi/src/fsEnsureBins.mjs`(原始碼)取得,**不經 `dist`**(`dist` 之 UMD 內嵌其建置時之 wsemi,使用端升 wsemi 對其無效,`npm ls` 顯示 deduped 亦會誤導).
+    ① `package.json` 宣告 `wsemi` `^1.9.76` 以上(1.9.75 起 `fsEnsureBins` 跨程序鎖:同一快取只下載一次,他方等候後讀快取;進度事件 `wait`,觀察事件〔`onTrace`〕`lock-wait`、`lock-takeover`;1.9.76 起另有 `fsEnsureBinsBudget`,見 ③).本套件測試與 `src` 皆自 `wsemi/src/fsEnsureBins.mjs`(原始碼)取得,**不經 `dist`**(`dist` 之 UMD 內嵌其建置時之 wsemi,使用端升 wsemi 對其無效,`npm ls` 顯示 deduped 亦會誤導).
     ② **唯一取得點** `test/tools/binsAcquire.mjs` 之 `ensureTestBins(this)`:一次取齊全部 4 個工具(不分檔各取其需),需要真執行檔之測試檔於 `before` 呼叫——`WScanDep.test.mjs` 之 `WScanDep`(其 `wsd` 於 `it` 內隱式取得,須在其前備妥)與 `captureExSbom` 兩個 describe、`api-scanScope.test.mjs` 之獨立 `before`、`unit-runOsv.test.mjs` 之巢狀 describe `with the real osv-scanner`(原只找舊版遺留之 `test/output/tools` 並於找不到時 `this.skip()`,發布包解開之目錄等乾淨環境靜默不跑該案,2026-11-25 發布包配置全套得 1 pending 而發現).任何測試不得因缺工具而 `skip`,亦不得自舊路徑 `test/output/tools` 找工具(`unit-binsAcquire` 掃描).其他測試檔與 `test/tools/` 不得靜態匯入 `src/ensureBins.mjs`(以假套件根複本＋本機假伺服器驗證取得行為者〔`api-ensureBins`、`api-wsdEntry`、`api-ensureBinsLock`〕為動態匯入複本,不在此限).取得失敗即該 hook 紅,不以 `skip` 掩蓋.
-    ③ **時限對齊下載預算**:hook 時限 `BIN_BUDGET_MS`(`binsAcquire.mjs` 匯出,無鏡像 3880000 毫秒,約 64.7 分鐘)＝取主幹清單 `stallMs` 30000 ＋ 各檔[下載次數×`totalMs` ＋ 解壓批數×(`totalMs`＋`KILL_WAIT_MS` 5000)＋ min(`totalMs`,60000)](同 wsemi `fsEnsureBinsCore.mjs` 之 `lockBudget`;`totalMs` 明給 600000＝wsemi 預設,不縮短:縮短會使慢網路下之測試比實際使用更易逾時,最大之 osv-scanner 59 MB 於 600000 毫秒約需 96 KB/s、300000 毫秒則需約 192 KB/s;有鏡像時每個來源多試鏡像,7480000);二壓縮檔(syft、grype)＋二直接檔(osv-scanner、ex-sbom):`30000＋2×(600000＋605000＋60000)＋2×(600000＋60000)`.此為每次嘗試皆耗盡上限之最壞情形(取得失敗多為連線錯誤,數秒內即 reject),網路正常時數十秒;不沿用 mocha 之 180 秒.算式與 wsemi 之對照以行為驗證:`api-ensureBinsLock` 讀持有者鎖檔 `owner.json` 之 `limitMs`(wsemi 實際用之 `lockBudget`),逐檔(壓縮檔與直接檔各一形狀、`totalMs` 取非預設值)等於 `calcBinBudgetMs` 去掉 `stallMs` 之值.清單出現算式未涵蓋之形狀(`parts`、檔案組、頂層 `bundles`)時 `calcBinBudgetMs` 拋錯,不低估.
+    ③ **時限取自 wsemi 之 `fsEnsureBinsBudget`、並行取兩倍,不自寫算式**(排程第 633 項,2026-11-25;規格 §6 E5-3):`binsAcquire.mjs` 之 `binBudgetMs(o)`＝`fsEnsureBinsBudget('bin/manifest.json', { ...o, pkgRoot: 本套件根, totalMs: BIN_TOTAL_MS })`(與 `src/ensureBins.mjs` 交給 `fsEnsureBins` 者同一份清單、同一套件根;鏡像 `W_BIN_MIRROR` 與離線 `W_BIN_OFFLINE` 由 wsemi 自環境變數讀取,與取得同源);`binHookMs(o)`＝`BIN_PARALLEL_FACTOR`(2)× 該值,即 `ensureTestBins` 設給 hook 之時限.**並行倍數**:`mocha --parallel` 之等候者最壞要先等他方持有者(上限即一個預算)、他方失敗才自行取得(再一個預算),故 hook 取兩倍.`totalMs` 明給 600000＝wsemi 預設,不縮短(縮短會使慢網路下之測試比實際使用更易逾時,最大之 osv-scanner 59 MB 於 600000 毫秒約需 96 KB/s、300000 毫秒則需約 192 KB/s);預算與傳給 `fsEnsureBins` 之 `totalMs` 同為 `BIN_TOTAL_MS`.固定值(無鏡像、連網)供對照:`BIN_BUDGET_MS`＝3880000 毫秒(約 64.7 分鐘,含取主幹清單之 `stallMs` 30000)、`BIN_HOOK_MS`＝7760000;有鏡像 7480000(單一行程).此為每次嘗試皆耗盡上限之最壞情形(取得失敗多為連線錯誤,數秒內即 reject),網路正常時數十秒;不沿用 mocha 之 180 秒.**本庫測試端不再有自寫算式**(原 `calcBinBudgetMs`、`BIN_STALL_MS`、`BIN_KILL_WAIT_MS` 已移除;`unit-binsAcquire` 掃描 `test/` 與 `test/tools/` 之非註解行不得含 `KILL_WAIT`、`Math.min(…totalMs`、`calcBinBudgetMs`、`lockBudget(` 等算式特徵).預算函式與鎖之對照以行為驗證:`api-ensureBinsLock` 讀持有者鎖檔 `owner.json` 之 `limitMs`(wsemi 實際用之 `lockBudget`),其值之集合(壓縮檔與直接檔各一形狀、`totalMs` 取非預設值)等於 `fsEnsureBinsBudget`(離線、單檔清單)對各檔所求值之集合——此為參照,非算式.
     ④ **真 `npm install` 保留**:`api-scanScope.test.mjs`、`WScanDep.test.mjs` 屬本套件核心功能(掃描已安裝之依賴)之整合測試,不以假 registry 取代;需連 registry(`npm_config_registry` 所指者),**網路不穩時會紅**(README〈測試之網路需求〉).
     ⑤ **驗收以事件為準**:清空 `bin-cache/`(先確認無目錄連結)後平行跑全套,設 `WSD_TEST_BINS_TRACE=<檔>` 並以 `node test/tools/binsTrace.mjs <檔>` 判讀各工具 `download` 恰 1 次(離開碼 0);另以伺服器端請求計數(`api-ensureBinsLock`)與 `fetch` 起始計數為旁證.
 
@@ -50,7 +50,7 @@
 | Grep `\bfetch\(` 於 `src/` | 僅 `src/exsbom.mjs`(`probeTitle` 對 127.0.0.1/[::1] 探測 ex-sbom 就緒,非下載) | 已套/刻意不套(本機探測) |
 | Grep `postinstall` 於 `package.json`、`scripts/` | 無 | 已套 |
 | Grep `spawn(\|spawnSync(` 於 `src/` | proc.mjs(`runTool`:syft/grype/osv 之 `spawn`,路徑來自 `tools[…].exePath`,由 scan.mjs 呼叫;`killTree`:逾時之 taskkill;2026-10-30 起 scan.mjs 不再直接 `spawnSync`)、exsbom.mjs(ex-sbom,路徑來自 `tools['ex-sbom'].exePath`)、install.mjs(npm install 之 `spawn`;2026-10-29 自 WScanDep.mjs 移入)、updatelist.mjs(npm ls)、exsbom.mjs 之系統指令(netstat、netsh、tasklist、taskkill) | 已套(執行檔路徑皆源自 `ensureBins`) |
-| `node C:/opensrcOper/tools/scan-bins.mjs --only w-scan-dep` | `OK w-scan-dep: 有清單;用 fsEnsureBins` | 已套 |
+| 主控工具 `scan-bins.mjs` 之 `--only w-scan-dep`(盤點外部執行檔之取得是否走 `fsEnsureBins`) | `OK w-scan-dep: 有清單;用 fsEnsureBins` | 已套 |
 | Grep `from\s+['"](\.\./)+src/ensureBins\.mjs['"]` 於 `test/`(含 `test/tools/`) | 僅 `test/tools/binsAcquire.mjs`(規則 10 ②) | 已套(`unit-binsAcquire` 接線案以檔案系統掃描,非手列) |
 | 清空 `bin-cache/` 後 `WSD_TEST_BINS_TRACE=<檔> npm test`,再 `node test/tools/binsTrace.mjs <檔>` | 各工具 `download` 恰 1 次、離開碼 0(規則 10 ⑤) | 已套(2026-11-25 驗收,數字見報告) |
 | `npm pack --dry-run --json` | 無外部執行檔與壓縮檔(`.exe`、`.dll`、`.node`、`.msi`、`.zip`、`.7z`、`.gz`、`.tgz`、`.NNN`);`bin/` 只有 `bin/manifest.json`;無 `CLAUDE*.md`、`tmp/`、`test/_tmp/`、`.env`;`sgud/state/state.md` 與 `test/tools/` 隨包(2026-11-02 起,npm 發布範圍原則 2〈套件測試之 npm 包檢查〉) | 已套(T1,`test/unit-binManifest.test.mjs`) |
@@ -84,8 +84,8 @@
 | 套件根與 cwd 無關、不轉傳 `floatingManifestUrl` | 同上 | 子行程於他處 cwd 載入;傳入非本 repo 之網址仍取標準主幹清單 |
 | 主函數類入口 | `test/api-wsdEntry.test.mjs` | 攔截全域 `fetch`(斷言除本機迴圈位址外未被呼叫)與 `child_process.spawn/spawnSync`(斷言啟動者為 `ensureBins` 回傳之快取路徑、工作目錄為 `exsbom-work`);取得先於 `npm install`(2026-10-29 起 npm install 經 `spawn`);快取在 `fdOut/test` 內被拒;`opt.fdTools` 與非一般物件之 `opt` 被拒(第三參數 `opt` 之報告用語見 R-REPORT-TEXT-01);靜態屬性匯出 |
 | 版本推得 | `test/unit-toolVersions.test.mjs` | 以 sha256 比對基準清單與主幹清單副本取得版本標籤;不符為 `unknown` |
-| E5/T9 使用端條(規則 10 ①) | `test/api-ensureBinsLock.test.mjs` | 4 個真行程(子行程 `test/tools/ensureBinsLockChild.mjs`)同時取同一空快取,經假套件根複本之 `src/ensureBins.mjs`(載入 node_modules 之 wsemi 原始碼)與本機 HTTP 伺服器:每個資產伺服器端只被請求 1 次、各工具 `download` 事件恰 1 次、至少 N-1 個行程回報 `lock-wait`(伺服器扣住資產回應直到收到事件才放行,不以延時同步)、他方等候後命中快取、無 `lock-skip`/逾時、不留 `.lock-*`/`.work-*`;再取一次不再下載.wsemi 1.9.74(無鎖)下此案紅(syft、grype 各 4 次) |
-| 規則 10 ②③⑤ | `test/unit-binsAcquire.test.mjs` | wsemi 宣告與安裝版本 ≥ 1.9.75 且經原始碼匯入(非 dist)、載入之 `fsEnsureBinsCore` 帶鎖與預算算式(wsemi 改式即紅)、`BIN_BUDGET_MS` 推算(手算 2080000、有鏡像 3880000、未涵蓋形狀拋錯)、`ensureTestBins` 之參數與時限(替身 ensure)、事件記錄與 `binsTrace` 判讀(含命令列離開碼 0/1/2)、各測試檔之接線(逐 describe 於首案前取得;無他檔靜態匯入 `src/ensureBins.mjs`) |
+| E5/T9 使用端條(規則 10 ①) | `test/api-ensureBinsLock.test.mjs` | 4 個真行程(子行程 `test/tools/ensureBinsLockChild.mjs`)同時取同一空快取,經假套件根複本之 `src/ensureBins.mjs`(載入 node_modules 之 wsemi 原始碼)與本機 HTTP 伺服器:每個資產伺服器端只被請求 1 次、各工具 `download` 事件恰 1 次、至少 N-1 個行程回報 `lock-wait`(伺服器扣住資產回應直到收到事件才放行,不以延時同步)、他方等候後命中快取、無 `lock-skip`/逾時、不留 `.lock-*`/`.work-*`;再取一次不再下載;持有者鎖檔 `owner.json` 之 `limitMs` 逐值等於 `fsEnsureBinsBudget`(離線、單檔清單、`totalMs` 非預設值)之值(預算函式與鎖同一算式之參照).wsemi 1.9.74(無鎖)下此案紅(syft、grype 各 4 次) |
+| 規則 10 ②③⑤ | `test/unit-binsAcquire.test.mjs` | wsemi 宣告與安裝版本 ≥ 1.9.76 且 `src/ensureBins.mjs`、`binsAcquire.mjs`(`fsEnsureBinsBudget`)皆經原始碼匯入(非 dist)、載入之 `fsEnsureBinsCore` 帶鎖;時限取得法(③):`BIN_BUDGET_MS`＝`fsEnsureBinsBudget` 對本庫清單與 `totalMs` 600000 之值且 `BIN_HOOK_MS` 為其 2 倍、鏡像與離線由環境變數決定(同取得)、預算函式拋錯不被吞、`test/` 與 `test/tools/` 無自寫算式特徵且預算與取得用同一份清單;`ensureTestBins` 之參數與時限(替身 `ensure`、替身 `budget` 回固定值 → hook 時限＝2×該值,並斷言傳給預算函式之清單、套件根、`totalMs` 與取得者一致;無 mocha context 亦求預算)、事件記錄與 `binsTrace` 判讀(含命令列離開碼 0/1/2)、各測試檔之接線(逐 describe 於首案前取得;無他檔靜態匯入 `src/ensureBins.mjs`) |
 | 工具位置防呆 | `test/unit-layout.test.mjs` | `assertToolsOutside` |
 | 更新工具 | `test/unit-genBinManifest.test.mjs` | 本機假 GitHub API:標籤網址、checksums 與 API digest 雙重核對、`--only`/`--tag`、拒絕 draft/prerelease/無可核對來源 |
 
@@ -175,7 +175,7 @@
 
 ## R-EXSBOM-PORT-01 ex-sbom 服務埠之監聽者之身分確認(wsemi `execProcessPortPidsSync`)
 
-來源:主控派工 run03(2026-10-30);wsemi 1.9.32 `execProcessPortPids`/`execProcessPortPidsSync`(報告 `C:\opensrcOper\dnow\20261030064553\agent-out\run01-修正報告.md` §6 第 3 列)。背景:本機(及 SEMI-WIN-DEV2;Windows 11 26300 + KB5127936)之系統回報 TCP 連線狀態值錯誤,`netstat -ano` 整列漏列新起之監聽、對外連線反列 LISTENING;以 netstat 判斷「誰在監聽某埠」者皆誤判(run01、run02 之全套因此 8 案未綠,主控經驗第三十七節)。
+來源:主控派工 run03(2026-10-30);wsemi 1.9.32 `execProcessPortPids`/`execProcessPortPidsSync`(報告 主控任務 20261030064553 之 `run01-修正報告.md` §6 第 3 列)。背景:本機(及 SEMI-WIN-DEV2;Windows 11 26300 + KB5127936)之系統回報 TCP 連線狀態值錯誤,`netstat -ano` 整列漏列新起之監聽、對外連線反列 LISTENING;以 netstat 判斷「誰在監聽某埠」者皆誤判(run01、run02 之全套因此 8 案未綠,主控經驗第三十七節)。
 
 ### 規則
 
@@ -301,7 +301,7 @@
 | Grep `assertDependenciesOnly` 於 `src/` | `install.mjs` 定義,且 `npmInstall` 成功路徑末呼叫一次 | 已套(規則 7;變異 M6 證明缺此呼叫即紅) |
 | Grep `devDependencies` 於 `src/`(程式碼,不含註解) | 無(沒有依 `devDependencies` 欄位自行過濾之邏輯) | 已套 |
 | Grep `SCAN_SCOPE` 於 `src/` | `config.mjs` 定義(`SCAN_SCOPE`、`SCAN_SCOPE_NOTE`);`WScanDep.mjs` 之 `result.scope` 與 log;`report.mjs`、`updatelist.mjs` 之說明句 | 已套(3 個產出各一處) |
-| 真實驗收(腳本副本 `C:\opensrcOper\dnow\20261030151214\agent-out\run01-evidence\real-accept.mjs`,放 repo 內 `./tmp/` 下執行;報告 `…\run01-修正報告.md`) | 修前:SBOM 65 元件含 esbuild.exe、clipboard_*.exe、Go 標準庫;修後:60 元件,npm 套件清單 57 項不變,libvips／term-size 在,`vue` 在,grype 62→3 | 已套 |
+| 真實驗收(腳本副本 主控任務 20261030151214 之 `run01-evidence/real-accept.mjs`,放 repo 內 `./tmp/` 下執行;報告 `…\run01-修正報告.md`) | 修前:SBOM 65 元件含 esbuild.exe、clipboard_*.exe、Go 標準庫;修後:60 元件,npm 套件清單 57 項不變,libvips／term-size 在,`vue` 在,grype 62→3 | 已套 |
 
 ### 對應測試
 
@@ -322,13 +322,13 @@
 
 M1 移除 `--omit=dev`(= 修前);M2 加 `--omit=peer`;M4 `result.json` 不寫 `scope`;M5 `scope` 值為 `'all'`;M6 `result.md` 不寫範圍;M7 `待更新套件.md` 不寫範圍;M8 全量安裝後依名稱刪 `devDependencies` 所列者.
 
-### 變異(2026-10-30 run02,規則 7;15 個皆被抓到,腳本副本 `C:\opensrcOper\dnow\20261030151214\agent-out\run02-evidence\mutate.mjs`)
+### 變異(2026-10-30 run02,規則 7;15 個皆被抓到,腳本副本 主控任務 20261030151214 之 `run02-evidence/mutate.mjs`)
 
 M0 = run01 之碼(不傳環境副本且無驗證)12 案紅;M1 不移除環境變數(保留驗證)7 案紅;M2 只移除 `include` 6 案紅;M3 比對不分大小寫去掉 `/i` 2 案紅;M4 過度移除(所有 `npm_config_*`)單元 1 案紅;M5 改動 `process.env` 而非副本 8 案紅;M6 不呼叫驗證 5 案紅;M7 驗證只看隱藏鎖定檔(去 `package-lock.json` 之落地檢查)1 案紅;M8 驗證只看 `package-lock.json` 2 案紅;M9 去落地檢查(`dev:true` 一律算裝入,誤報)10 案紅;M10 去「有套件卻無鎖定檔」之 fail-closed 1 案紅;M11 `devOptional` 也當 dev(誤報)1 案紅;M12 鎖定檔損毀當作沒有(fail-open)1 案紅;M13 訊息不截斷 1 案紅;M14 訊息去掉排除方式 5 案紅.
 
 ## R-NPM-REGISTRY-01 隔離安裝沿用呼叫端專案之倉庫位址設定
 
-來源:主控提出(Gitea #27 run02 之範圍外發現,見 `C:\opensrcOper\dhist\20261030151214\agent-out\run02-修正報告.md` §2 案 19、§8-3),任務 20261030174519 run01;主控裁定 1~5.
+來源:主控提出(Gitea #27 run02 之範圍外發現,見 主控任務 20261030151214 之 `run02-修正報告.md` §2 案 19、§8-3),任務 20261030174519 run01;主控裁定 1~5.
 
 背景(實測,npm 12.1.0):隔離安裝只把掃描目標 `package.json` 複製到 `fdOut/test` 再 `npm install --omit=dev`;npm 之專案層設定檔取自安裝目錄,讀不到呼叫端專案層之 `.npmrc`。自有套件只發布於私有倉庫,專案方常把 `registry=` 只寫在專案層;專案層設 `registry=A`、使用者層設 `registry=B` 時,隔離安裝由 B 解析(自有套件拿到舊版或 `ETARGET`),掃描結果與專案實際安裝不符.
 
@@ -374,13 +374,13 @@ M0 = run01 之碼(不傳環境副本且無驗證)12 案紅;M1 不移除環境變
 - **工作區(workspaces)**:查詢結果就是 npm 在 `package.json` 所在資料夾所見者(專案層檔位置由 npm 決定,monorepo 根目錄之 `.npmrc` npm 於成員資料夾是否讀取,以 npm 為準);無 workspaces 夾具,未驗證。
 - 真實 npm 本身之輸出(stdio 繼承)不在 `api-wsdEntry` 之 console 攔截範圍;認證值檢查涵蓋 `fdOut` 全部檔案、攔截到之 log 與錯誤訊息。
 
-### 變異(2026-10-30 run01;腳本副本 `C:\opensrcOper\dnow\20261030174519\agent-out\run01-evidence\mutate.mjs`)
+### 變異(2026-10-30 run01;腳本副本 主控任務 20261030174519 之 `run01-evidence/mutate.mjs`)
 
 對照組(BASE)unit 25／api 21／entry(`-g registry`:新案 10＋既有 1)11 全綠;M0~M17 共 18 個變異皆被抓到(紅案數):M0 = 修前(`WScanDep` 不查詢、不寫 `.npmrc`)9;M1 只帶 `registry`、不帶 `@scope:registry` 16;M2 `.npmrc` 多帶 `include[]=dev` 13;M3 不去除網址內嵌帳密 3;M4 執行 npm config 失敗靜默退回預設 3;M5 忽略離開碼非 0 2;M6 離開碼非 0 之訊息附 stderr 2;M7 輸出非 JSON 之訊息附 stdout 5;M8 於錯誤目錄(`process.cwd()`)查詢 6;M9 不先刪既有 `.npmrc`、改附加寫入 3;M10 時限變數名稱錯 9;M11 npm 未列出 registry 不拋錯 3;M12 查詢但不寫檔 5;M13 `.npmrc` 值不加引號 1;M14 放行非 http(s) 網址 4;M15 `WScanDep` 吞掉查詢失敗 4;M16 `runTool` 不傳 `cwd` 12;M17 不標出被去除帳密之鍵 2.腳本每次還原並回驗位元組全等.
 
 ## R-REPORT-TEXT-01 報告用語由呼叫端傳入(公開套件不得寫死使用端之系統名與現況)
 
-來源:主控立案(排程第 330 項,任務 20261106102000 sd330);使用者 2026-11-06 裁定:公開 repo 不得含使用端之專案名、計畫名與業主字樣,要清除並守門.守門名單在主控私有處,不入本庫(本庫看不到名單).輸入檢測依 `C:\opensrcOper\dspec\輸入參數之檢測機制.md`(K1 種類由程式碼宣告、K3 非預期之 opt 視為未給、V4 opt 本身、V5 各鍵、V6 已移除之鍵、V7 未宣告之鍵、V9 不改寫、V11 每鍵讀一次、K9/V20 不回顯值).
+來源:主控立案(排程第 330 項,任務 20261106102000 sd330);使用者 2026-11-06 裁定:公開 repo 不得含使用端之專案名、計畫名與業主字樣,要清除並守門.守門名單在主控私有處,不入本庫(本庫看不到名單).輸入檢測依 `dspec/輸入參數之檢測機制.md`(K1 種類由程式碼宣告、K3 非預期之 opt 視為未給、V4 opt 本身、V5 各鍵、V6 已移除之鍵、V7 未宣告之鍵、V9 不改寫、V11 每鍵讀一次、K9/V20 不回顯值).
 
 ### 規則(程式碼須長成什麼樣)
 

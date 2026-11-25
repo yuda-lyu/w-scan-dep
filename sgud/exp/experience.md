@@ -175,7 +175,7 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 
 - **全綠不證明只下載一次**：修前（wsemi 1.9.74、清空 `bin-cache`）全套 377 通過，兩個真下載檔同時啟動時 16 案全綠，syft 卻被兩個 worker 各下載一次（以 `NODE_OPTIONS=--import` 預載模組包住 `globalThis.fetch`，記每次 `/releases/download/` 之起始 pid；wsemi 之下載每次請求取用全域 `fetch`，故包住即可涵蓋）。單跑全套多半撞不上（本機下載約 30 秒）；要穩定重現須只跑兩個真下載檔。
 - **本庫測試經 `src` 取得，不經 `dist`**：`src/ensureBins.mjs` 匯入 `wsemi/src/fsEnsureBins.mjs`，測試匯入 `src/…`，故升 wsemi 即生效（他庫之 `dist` 內嵌舊 wsemi 者不然）。以 `unit-binsAcquire` 釘住（宣告、安裝版、匯入形式、解析到單一副本、載入之核心含鎖）。
-- **預算算式以行為驗證，不釘 wsemi 原始碼字面**：初版以字串比對 `lockBudget` 之 `return` 行，複審指出漏報（`n`、`x` 推算被改而 `return` 行不變）與誤報（重排即紅）。改為 `api-ensureBinsLock` 讀持有者鎖檔 `owner.json` 之 `limitMs`（wsemi 實際用之 `lockBudget`）與 `calcBinBudgetMs` 對照，`totalMs` 取非預設值、壓縮檔與直接檔各一形狀。
+- **預算算式以行為驗證，不釘 wsemi 原始碼字面**：初版以字串比對 `lockBudget` 之 `return` 行，複審指出漏報（`n`、`x` 推算被改而 `return` 行不變）與誤報（重排即紅）。改為 `api-ensureBinsLock` 讀持有者鎖檔 `owner.json` 之 `limitMs`（wsemi 實際用之 `lockBudget`）與 `calcBinBudgetMs` 對照，`totalMs` 取非預設值、壓縮檔與直接檔各一形狀。（第 633 項起已改取 wsemi `fsEnsureBinsBudget`，`calcBinBudgetMs` 已移除，見末節。）
 - **等候者可在持有者釋放鎖之前即命中快取而進入下一檔，瞬間同時有兩個 `.lock-*`**：初版假設「請求到達時快取夾內只有一個鎖」，20 次連跑 4 次紅（`limitMs` 讀到 `undefined`）；改為收集所有看到之 `limitMs` 值，與預期之兩種形狀值集合比對（並斷言兩值相異以保鑑別力），25 次連跑全綠。鎖之暫存夾 `.lock-<鍵>.new-<亂數>` 亦以 `.lock-` 起頭，列鎖須以 `^\.lock-[0-9a-f]{32}$` 篩。
 - **跨程序鎖測試以事件閘門同步**：本機假伺服器扣住所有資產回應，直到 N-1 個子行程回報 `lock-wait`（`onTrace`）才放行；鎖不存在時永遠等不到事件，逾上限（60 秒，取大以免高負載誤紅，有鎖時收到事件即放行不影響耗時）才放行並使斷言轉紅。wsemi 1.9.74 下此案紅（syft、grype 各 4 次、osv-scanner 3 次）。
 - **`totalMs` 不縮短**：初版明給 300000（以為「90 MB 以下單檔 100 KB/s 亦足」，90 MB 是 syft 解壓後大小，實際下載 zip；osv-scanner 59 MB 於 300000 毫秒需約 192 KB/s，比 wsemi 預設 600000 之 96 KB/s 更易逾時）。改回預設，預算 3880000 毫秒。
@@ -185,3 +185,16 @@ cmd //c "taskkill /F /T /PID <windows-pid>"
 - **`npm i wsemi@^1.9.75` 會補 `package.json` 檔尾換行並同步 `package-lock.json` 之根 `version`**（原檔無尾換行、鎖檔版本落後）；尾換行以 `tmp/` 腳本還原，鎖檔版本同步為 npm 自動寫入，未手改。
 
 - **wsemi 1.9.70 起 `execProcessPortPids(Sync)` 之埠號無效訊息改 V19 格式**（2026-11-19）：由 `port is not an integer between 1 and 65535` 改為 `invalid port: must be an integer from 1 to 65535`（wsemi `src/_execPortPids.mjs` 之 `MSG_PORT`，不帶輸入值）。本庫 `portListeners` 以 `查詢埠 <port> 之監聽者失敗:` 為前綴包裝（`src/exsbom.mjs`），前綴不變；`test/unit-exsbom.test.mjs` 之「埠號不合法為失敗(拋錯)」案原以正規式比對舊字面，升版後紅，期望改新字面（仍斷言拋錯）。先升版、不改期望、跑一次取紅，再改期望取綠。`src/` 之註解無引用舊訊息。
+
+## 測試端時限改取 wsemi `fsEnsureBinsBudget`、並行取兩倍（2026-11-25，任務 20261125104406 t633c，排程第 633 項）
+
+- **取代自寫算式（承上「預算算式以行為驗證」）**：wsemi 1.9.76 起匯出 `fsEnsureBinsBudget(manifest, opt)`，與鎖之上限同一算式（單一來源）。`binsAcquire.mjs` 移除 `calcBinBudgetMs`、`BIN_STALL_MS`、`BIN_KILL_WAIT_MS` 與清單形狀白名單（wsemi 自己涵蓋 `parts`、檔案組、鏡像，不必再「遇未涵蓋形狀就拋錯」）。對本庫清單，新舊數值逐位相同（無鏡像 3880000、有鏡像 7480000、離線 3850000），故行為變化只有一個：並行倍數。
+- **並行倍數 2**：`mocha --parallel` 之等候者最壞要先等他方持有者（上限一個預算）、他方失敗才自行取得（再一個預算），hook 時限取 `BIN_PARALLEL_FACTOR`(2)×預算＝7760000。鏡像與離線不另傳——`fsEnsureBinsBudget` 與 `fsEnsureBins` 同讀 `W_BIN_MIRROR`／`W_BIN_OFFLINE`，預算與取得同源；只有固定常數 `BIN_BUDGET_MS`／`BIN_HOOK_MS` 明給 `mirror: ''`、`offline: false`，使其不隨開發機環境變數而變。倍數 2 只涵蓋一個競爭者（規格寫「約兩倍」）；三個以上 worker 且持有者連續失敗之理論最壞更大，屬失敗路徑，不涵蓋。
+- **注入接縫驗「取自預算函式」**：`ensureTestBins(ctx, { ensure, budget })` 之 `budget` 替身回固定值 123456，斷言 hook 時限＝2×123456，並斷言預算函式收到之 `['bin/manifest.json', { pkgRoot, totalMs }]` 與取得者一致（清單、套件根＝`src/config.mjs` 之 `ROOT`、`totalMs` 同值、無自帶 `mirror`／`offline`）。只用真 wsemi 比對數值（`BIN_BUDGET_MS === fsEnsureBinsBudget(…)`）會變成對自己呼叫自己；替身固定值才分得出「自行另算」與「取自預算函式」。
+- **時限須於開始取得之前設定（複審發現之存活變異）**：初版斷言只在 `await ensureTestBins` 之後看 `ctx.ts`，把 `ctx.timeout(hook)` 挪到 `ensure` 之後（下載期間仍是 180 秒）全部斷言仍過。補：替身 `ensure` 於被呼叫時記下 `ctx.ts.length`，斷言為 1。凡「在動作之前設定」之斷言，要在動作被呼叫之時點取樣，不在動作結束之後。
+- **變異之判讀**：22 個變異（`tmp` 腳本，註解行不算）中 20 個為案例級轉紅；M4（`pkgRoot` 錯）、M5（清單名錯）在匯入 `binsAcquire.mjs` 時即由 `fsEnsureBinsBudget` 拋 `E_MANIFEST`（cause 為 `ENOENT`；`BIN_BUDGET_MS` 於模組載入時求值），整檔無法載入、無摘要行，依「無摘要行不算判定」歸為載入期殺死而非案例級；其效果是共用工具壞掉時所有匯入它之測試檔皆於載入期紅（吵而不靜默）。`pkgRoot` 誤用 `process.cwd()` 之變異存活（mocha 於套件根執行時兩者相同），影響低，未處理。
+- **「無自寫算式」守門之正則要含常數與 `Math.min(…, 60000)` 形**：初版只擋 `KILL_WAIT`、`Math.min(…totalMs`、舊函式名，複審以 `Math.min(BIN_TOTAL_MS, 60000)`、`SLACK_MS` 試出漏報；已擴充並以變異驗證。
+- **命名空間匯入使修前紅可逐案觀察**：新測試以 `import * as acq` 取用新匯出，對修前之 `binsAcquire.mjs` 跑時 8 案個別轉紅（而非整檔 `SyntaxError` 無法載入），可看出各案鑑別之處。
+- **鎖檔 `limitMs` 對照只是參照**：預算函式與鎖是同一算式，兩者互相對照抓不到「同時算錯」；故另斷言每個預期值大於 `totalMs`（至少涵蓋一次下載）。對照用 `offline: true` 去掉主幹清單之 `stallMs`（耦合 1.9.76 之行為：離線不加 `stallMs`）。
+- **本機路徑改寫**：`sgud/` 內三檔共 24 處本機路徑（主控報告、規格、他套件原始碼之絕對路徑）已於本輪改為名稱（`主控任務 <編號> 之 <檔>`、`dspec/<檔>`、去掉本機根）；公開庫不寫本機路徑。
+- **發布包配置重跑沿用同一路徑**：發布包解開目錄之 `ex-sbom.exe` 路徑含快取內雜湊，換路徑就觸發新的防火牆詢問；本輪解到與上輪相同之暫存路徑以重用既有規則（解開用 `tar --strip-components=1`，`npm install` 約 4 分鐘〔1036 套件〕，安裝產生之 `package-lock.json` 無倉庫位址仍先刪）。
